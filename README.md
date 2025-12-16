@@ -292,12 +292,13 @@ EOF
 ```
 devhub/
 ├── src/                  # Rust CLI + daemon
-│   ├── main.rs           # CLI entry (clap) - 1100+ lines
+│   ├── main.rs           # CLI entry (clap)
 │   ├── api.rs            # REST API (axum)
 │   ├── process.rs        # Service management (PM2, Docker, native)
 │   ├── discovery.rs      # Auto-detection (6 project types)
 │   ├── manifest.rs       # TOML parsing
-│   ├── registry.rs       # Project registry
+│   ├── registry.rs       # Project registry (+ favorites, recent)
+│   ├── ports.rs          # Port allocation & conflict detection
 │   ├── caddy.rs          # Proxy config generation
 │   └── config.rs         # Global settings
 ├── devhub-ui/            # SvelteKit dashboard (Svelte 5)

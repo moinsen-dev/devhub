@@ -222,8 +222,7 @@ async fn start_project(
 
     // Start services
     for svc in &manifest.services {
-        if let Err(e) = process::start_service(&name, &entry.path, svc, &manifest).await
-        {
+        if let Err(e) = process::start_service(&name, &entry.path, svc, &manifest).await {
             tracing::error!("Failed to start service {}: {}", svc.name, e);
         }
     }

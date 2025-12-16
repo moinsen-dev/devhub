@@ -119,7 +119,7 @@ const SKIP_DIRECTORIES: &[&str] = &[
 /// Check if a directory should be skipped during scanning
 fn should_skip_directory(name: &str) -> bool {
     // Skip hidden directories and common non-service directories
-    name.starts_with('.') || SKIP_DIRECTORIES.iter().any(|&skip| skip == name)
+    name.starts_with('.') || SKIP_DIRECTORIES.contains(&name)
 }
 
 /// Detect project type from a directory without recursion
@@ -226,19 +226,16 @@ fn discover_subdirectory_services(path: &Path) -> Result<Vec<DiscoveredService>>
                 }
                 ProjectType::Node => {
                     // Try to detect dev script from package.json
-                    let cmd =
-                        if let Ok(pkg) = std::fs::read_to_string(subdir.join("package.json")) {
-                            if let Ok(pkg_json) = serde_json::from_str::<serde_json::Value>(&pkg) {
-                                if let Some(scripts) =
-                                    pkg_json.get("scripts").and_then(|s| s.as_object())
-                                {
-                                    if scripts.contains_key("dev") {
-                                        "npm run dev".to_string()
-                                    } else if scripts.contains_key("start") {
-                                        "npm start".to_string()
-                                    } else {
-                                        "npm run dev".to_string()
-                                    }
+                    let cmd = if let Ok(pkg) = std::fs::read_to_string(subdir.join("package.json"))
+                    {
+                        if let Ok(pkg_json) = serde_json::from_str::<serde_json::Value>(&pkg) {
+                            if let Some(scripts) =
+                                pkg_json.get("scripts").and_then(|s| s.as_object())
+                            {
+                                if scripts.contains_key("dev") {
+                                    "npm run dev".to_string()
+                                } else if scripts.contains_key("start") {
+                                    "npm start".to_string()
                                 } else {
                                     "npm run dev".to_string()
                                 }
@@ -247,7 +244,10 @@ fn discover_subdirectory_services(path: &Path) -> Result<Vec<DiscoveredService>>
                             }
                         } else {
                             "npm run dev".to_string()
-                        };
+                        }
+                    } else {
+                        "npm run dev".to_string()
+                    };
                     (cmd, ServiceType::Node)
                 }
                 ProjectType::PythonUv | ProjectType::PythonPip => {

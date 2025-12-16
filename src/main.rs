@@ -570,8 +570,7 @@ async fn cmd_start(
                 caddy::generate_config(&name, &manifest)?;
 
                 for svc in &manifest.services {
-                    let _ = process::start_service(&name, &entry.path, svc, &manifest)
-                        .await;
+                    let _ = process::start_service(&name, &entry.path, svc, &manifest).await;
                 }
 
                 // Track as recently used
@@ -860,7 +859,11 @@ async fn cmd_discover(path: PathBuf, dry_run: bool) -> Result<()> {
         "{} Discovering project at {}...{}",
         "→".blue(),
         path.display().to_string().cyan(),
-        if dry_run { " (dry-run)".dimmed().to_string() } else { String::new() }
+        if dry_run {
+            " (dry-run)".dimmed().to_string()
+        } else {
+            String::new()
+        }
     );
 
     let discovered = discovery::discover_project(&path)?;
@@ -910,10 +913,7 @@ async fn cmd_discover(path: PathBuf, dry_run: bool) -> Result<()> {
         println!("{}", content);
         println!("{}", "─".repeat(50).dimmed());
         println!();
-        println!(
-            "{} Run without --dry-run to generate the file",
-            "→".blue()
-        );
+        println!("{} Run without --dry-run to generate the file", "→".blue());
         return Ok(());
     }
 
@@ -1012,10 +1012,24 @@ async fn cmd_env(project: String, service: Option<String>, format: String) -> Re
     }
 
     // Show env file sources
-    println!("{}", "Environment sources (highest priority first):".dimmed());
-    println!("  1. Service env_file: {}", service.as_deref().and_then(|s| {
-        manifest.services.iter().find(|svc| svc.name == s).and_then(|svc| svc.env_file.as_deref())
-    }).unwrap_or("(none)").dimmed());
+    println!(
+        "{}",
+        "Environment sources (highest priority first):".dimmed()
+    );
+    println!(
+        "  1. Service env_file: {}",
+        service
+            .as_deref()
+            .and_then(|s| {
+                manifest
+                    .services
+                    .iter()
+                    .find(|svc| svc.name == s)
+                    .and_then(|svc| svc.env_file.as_deref())
+            })
+            .unwrap_or("(none)")
+            .dimmed()
+    );
     println!("  2. Service cwd/.env.local");
     println!("  3. Service cwd/.env");
     println!("  4. Project root .env.local");

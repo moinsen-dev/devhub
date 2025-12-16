@@ -24,6 +24,11 @@ pub struct ProjectInfo {
 
     #[serde(default)]
     pub tags: Vec<String>,
+
+    /// Environment files to load for all services (e.g., [".env", ".env.local"])
+    /// Loaded in order, later files override earlier ones
+    #[serde(default)]
+    pub env_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +65,10 @@ pub struct Service {
     /// Environment variables specific to this service
     #[serde(default)]
     pub env: HashMap<String, String>,
+
+    /// Environment file to load for this service (relative to project root or service cwd)
+    #[serde(default)]
+    pub env_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -101,6 +110,7 @@ impl Manifest {
                 name: project_name.to_string(),
                 description: Some("My awesome project".to_string()),
                 tags: vec![],
+                env_files: vec![],
             },
             services: vec![Service {
                 name: "web".to_string(),
@@ -113,6 +123,7 @@ impl Manifest {
                 main: true,
                 depends_on: vec![],
                 env: HashMap::new(),
+                env_file: None,
             }],
             environment: HashMap::new(),
         }
@@ -193,6 +204,7 @@ depends_on = ["api"]
                 name: "test".to_string(),
                 description: None,
                 tags: vec![],
+                env_files: vec![],
             },
             services: vec![
                 Service {
@@ -206,6 +218,7 @@ depends_on = ["api"]
                     main: true,
                     depends_on: vec!["api".to_string()],
                     env: HashMap::new(),
+                    env_file: None,
                 },
                 Service {
                     name: "api".to_string(),
@@ -218,6 +231,7 @@ depends_on = ["api"]
                     main: false,
                     depends_on: vec![],
                     env: HashMap::new(),
+                    env_file: None,
                 },
             ],
             environment: HashMap::new(),
@@ -226,5 +240,25 @@ depends_on = ["api"]
         let ordered = manifest.services_in_order();
         assert_eq!(ordered[0].name, "api"); // api first (no deps)
         assert_eq!(ordered[1].name, "web"); // web second (depends on api)
+    }
+
+    #[test]
+    fn test_parse_manifest_with_env_files() {
+        let toml = r#"
+[project]
+name = "test-project"
+env_files = [".env", ".env.local"]
+
+[[services]]
+name = "api"
+type = "rust-binary"
+command = "cargo run"
+port = 8080
+env_file = "api/.env"
+"#;
+
+        let manifest: Manifest = toml::from_str(toml).unwrap();
+        assert_eq!(manifest.project.env_files, vec![".env", ".env.local"]);
+        assert_eq!(manifest.services[0].env_file, Some("api/.env".to_string()));
     }
 }

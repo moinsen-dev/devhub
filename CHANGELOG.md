@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-12-16
+
+### Added
+
+- **Environment File Loading**
+  - Automatic `.env` and `.env.local` file support
+  - Variable interpolation with `$VAR` and `${VAR}` syntax
+  - `env_files` field in project config for explicit env file list
+  - `env_file` field per service for service-specific env files
+  - `devhub env <project>` - Show resolved environment variables
+  - `devhub env <project> -s <service>` - Show env for specific service
+  - `devhub env <project> -f export` - Output in shell export format
+
+- **Monorepo Auto-Discovery**
+  - Automatic subdirectory scanning when no root project type found
+  - Detects multiple project types in subdirectories (Rust, Node, Flutter, Python, Go, Docker)
+  - Generates multi-service `devhub.toml` with correct `cwd` settings
+  - Smart port allocation for discovered services
+  - Comprehensive skip list for common non-service directories
+
+- **Discovery Enhancements**
+  - `devhub discover --dry-run` - Preview without writing files
+  - Shows directory path for each detected service
+  - Displays full TOML content in dry-run mode
+
+### Changed
+
+- Environment loading priority chain:
+  1. System environment → 2. Project `.env` → 3. `.env.local` → 4. `env_files` → 5. `[environment]` → 6. Service `env_file` → 7. Service `cwd/.env` → 8. Service `cwd/.env.local` → 9. Service `env = {}`
+
+### Dependencies
+
+- Added `dotenvy = "0.15"` for .env file parsing
+
 ## [0.2.0] - 2025-12-16
 
 ### Added
@@ -114,6 +148,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - IPv6 port detection for Next.js and other modern Node servers
 
-[Unreleased]: https://github.com/moinsen-dev/devhub/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/moinsen-dev/devhub/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/moinsen-dev/devhub/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/moinsen-dev/devhub/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/moinsen-dev/devhub/releases/tag/v0.1.0

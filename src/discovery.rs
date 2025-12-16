@@ -63,6 +63,235 @@ impl std::fmt::Display for ProjectType {
     }
 }
 
+/// Directories to skip when scanning for subdirectory services
+const SKIP_DIRECTORIES: &[&str] = &[
+    "node_modules",
+    ".git",
+    ".github",
+    ".vscode",
+    ".idea",
+    "dist",
+    "build",
+    "out",
+    "target",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".env",
+    "env",
+    "coverage",
+    ".next",
+    ".nuxt",
+    ".svelte-kit",
+    ".dart_tool",
+    ".pub-cache",
+    "ios",
+    "android",
+    "macos",
+    "windows",
+    "linux",
+    "vendor",
+    "deps",
+    "_build",
+    ".cargo",
+    ".rustup",
+    "Pods",
+    ".gradle",
+    ".terraform",
+    ".serverless",
+    "artifacts",
+    "tmp",
+    "temp",
+    "logs",
+    ".cache",
+    ".parcel-cache",
+    ".turbo",
+    ".nx",
+    "storybook-static",
+    "playwright-report",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "htmlcov",
+    "cypress",
+];
+
+/// Check if a directory should be skipped during scanning
+fn should_skip_directory(name: &str) -> bool {
+    // Skip hidden directories and common non-service directories
+    name.starts_with('.') || SKIP_DIRECTORIES.iter().any(|&skip| skip == name)
+}
+
+/// Detect project type from a directory without recursion
+fn detect_project_type(path: &Path) -> Option<ProjectType> {
+    if path.join("Cargo.toml").exists() {
+        Some(ProjectType::Rust)
+    } else if path.join("pubspec.yaml").exists() {
+        Some(ProjectType::Flutter)
+    } else if path.join("package.json").exists() {
+        Some(ProjectType::Node)
+    } else if path.join("pyproject.toml").exists() || path.join("uv.lock").exists() {
+        Some(ProjectType::PythonUv)
+    } else if path.join("requirements.txt").exists() {
+        Some(ProjectType::PythonPip)
+    } else if path.join("go.mod").exists() {
+        Some(ProjectType::Go)
+    } else if path.join("docker-compose.yml").exists() || path.join("docker-compose.yaml").exists()
+    {
+        Some(ProjectType::Docker)
+    } else {
+        None
+    }
+}
+
+/// Discover services from subdirectories (monorepo support)
+fn discover_subdirectory_services(path: &Path) -> Result<Vec<DiscoveredService>> {
+    let mut services = Vec::new();
+    let mut next_port = 3000u16;
+
+    // Read immediate subdirectories
+    let entries = std::fs::read_dir(path)?;
+
+    for entry in entries.filter_map(|e| e.ok()) {
+        let subdir = entry.path();
+
+        // Skip if not a directory
+        if !subdir.is_dir() {
+            continue;
+        }
+
+        // Get directory name
+        let dir_name = match subdir.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name.to_string(),
+            None => continue,
+        };
+
+        // Skip common non-service directories
+        if should_skip_directory(&dir_name) {
+            continue;
+        }
+
+        // Check if this subdirectory has a project type
+        if let Some(project_type) = detect_project_type(&subdir) {
+            // Generate appropriate command based on project type
+            let (command, service_type) = match project_type {
+                ProjectType::Rust => {
+                    // Try to detect binary name from Cargo.toml
+                    let cmd = if let Ok(cargo_content) =
+                        std::fs::read_to_string(subdir.join("Cargo.toml"))
+                    {
+                        // Parse cargo toml for binary name
+                        #[derive(serde::Deserialize)]
+                        struct SimpleCargoToml {
+                            package: Option<SimplePackage>,
+                        }
+                        #[derive(serde::Deserialize)]
+                        struct SimplePackage {
+                            name: Option<String>,
+                        }
+                        if let Ok(cargo) = toml::from_str::<SimpleCargoToml>(&cargo_content) {
+                            if let Some(pkg) = cargo.package {
+                                if let Some(name) = pkg.name {
+                                    format!("cargo run --bin {} --release", name)
+                                } else {
+                                    "cargo run --release".to_string()
+                                }
+                            } else {
+                                "cargo run --release".to_string()
+                            }
+                        } else {
+                            "cargo run --release".to_string()
+                        }
+                    } else {
+                        "cargo run --release".to_string()
+                    };
+                    (cmd, ServiceType::RustBinary)
+                }
+                ProjectType::Flutter => {
+                    // Check if it's a web project or server
+                    if subdir.join("web").exists() {
+                        (
+                            format!("flutter run -d chrome --web-port {}", next_port),
+                            ServiceType::Shell,
+                        )
+                    } else if subdir.join("bin").exists() {
+                        // Dart server binary
+                        ("dart run".to_string(), ServiceType::Shell)
+                    } else {
+                        (
+                            format!("flutter run -d chrome --web-port {}", next_port),
+                            ServiceType::Shell,
+                        )
+                    }
+                }
+                ProjectType::Node => {
+                    // Try to detect dev script from package.json
+                    let cmd =
+                        if let Ok(pkg) = std::fs::read_to_string(subdir.join("package.json")) {
+                            if let Ok(pkg_json) = serde_json::from_str::<serde_json::Value>(&pkg) {
+                                if let Some(scripts) =
+                                    pkg_json.get("scripts").and_then(|s| s.as_object())
+                                {
+                                    if scripts.contains_key("dev") {
+                                        "npm run dev".to_string()
+                                    } else if scripts.contains_key("start") {
+                                        "npm start".to_string()
+                                    } else {
+                                        "npm run dev".to_string()
+                                    }
+                                } else {
+                                    "npm run dev".to_string()
+                                }
+                            } else {
+                                "npm run dev".to_string()
+                            }
+                        } else {
+                            "npm run dev".to_string()
+                        };
+                    (cmd, ServiceType::Node)
+                }
+                ProjectType::PythonUv | ProjectType::PythonPip => {
+                    // Check for common entry points
+                    if subdir.join("main.py").exists() {
+                        ("python main.py".to_string(), ServiceType::Shell)
+                    } else if subdir.join("app.py").exists() {
+                        (
+                            format!("uvicorn app:app --host 0.0.0.0 --port {}", next_port),
+                            ServiceType::Shell,
+                        )
+                    } else if subdir.join("src/main.py").exists() {
+                        ("python src/main.py".to_string(), ServiceType::Shell)
+                    } else {
+                        (
+                            format!("uvicorn main:app --host 0.0.0.0 --port {}", next_port),
+                            ServiceType::Shell,
+                        )
+                    }
+                }
+                ProjectType::Go => ("go run .".to_string(), ServiceType::Shell),
+                ProjectType::Docker => (
+                    "docker compose up -d".to_string(),
+                    ServiceType::DockerCompose,
+                ),
+                ProjectType::Unknown => continue,
+            };
+
+            services.push(DiscoveredService {
+                name: dir_name.clone(),
+                service_type,
+                command,
+                port: Some(next_port),
+                cwd: Some(dir_name),
+            });
+
+            // Increment port for next service
+            next_port += 1;
+        }
+    }
+
+    Ok(services)
+}
+
 /// Discover project type and services from a directory
 pub fn discover_project(path: &Path) -> Result<DiscoveredProject> {
     let project_name = path
@@ -71,7 +300,7 @@ pub fn discover_project(path: &Path) -> Result<DiscoveredProject> {
         .unwrap_or("project")
         .to_string();
 
-    // Detect project type (priority order)
+    // First, try to detect project type at root level
     let (project_type, services, description) = if path.join("Cargo.toml").exists() {
         discover_rust(path, &project_name)?
     } else if path.join("pubspec.yaml").exists() {
@@ -88,7 +317,19 @@ pub fn discover_project(path: &Path) -> Result<DiscoveredProject> {
     {
         discover_docker(path, &project_name)?
     } else {
-        (ProjectType::Unknown, Vec::new(), None)
+        // No project type detected at root - scan subdirectories for monorepo
+        let subdir_services = discover_subdirectory_services(path)?;
+
+        if !subdir_services.is_empty() {
+            // Found services in subdirectories - this is a monorepo
+            let description = Some(format!(
+                "Multi-service project with {} components",
+                subdir_services.len()
+            ));
+            (ProjectType::Unknown, subdir_services, description)
+        } else {
+            (ProjectType::Unknown, Vec::new(), None)
+        }
     };
 
     Ok(DiscoveredProject {
@@ -608,6 +849,7 @@ pub fn to_manifest(discovered: &DiscoveredProject) -> Manifest {
             main: i == 0,
             depends_on: Vec::new(),
             env: HashMap::new(),
+            env_file: None,
         })
         .collect();
 
@@ -621,6 +863,7 @@ pub fn to_manifest(discovered: &DiscoveredProject) -> Manifest {
                     .unwrap_or_else(|| format!("{} project", discovered.project_type)),
             ),
             tags: vec![discovered.project_type.to_string().to_lowercase()],
+            env_files: vec![],
         },
         services,
         environment: HashMap::new(),

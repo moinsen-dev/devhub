@@ -8,7 +8,176 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::process::Command;
 
-use crate::manifest::{Service, ServiceType};
+use crate::manifest::{Manifest, Service, ServiceType};
+
+/// Load environment variables from a .env file
+/// Returns a HashMap of key-value pairs
+fn load_env_file(path: &Path) -> HashMap<String, String> {
+    let mut vars = HashMap::new();
+
+    if !path.exists() {
+        return vars;
+    }
+
+    // Use dotenvy to parse the file
+    if let Ok(iter) = dotenvy::from_path_iter(path) {
+        for item in iter.flatten() {
+            vars.insert(item.0, item.1);
+        }
+    }
+
+    vars
+}
+
+/// Interpolate variables in environment values
+/// Supports $VAR and ${VAR} syntax
+fn interpolate_env_vars(env: &mut HashMap<String, String>) {
+    // Collect keys first to avoid borrow issues
+    let keys: Vec<String> = env.keys().cloned().collect();
+
+    for key in keys {
+        if let Some(value) = env.get(&key).cloned() {
+            let interpolated = interpolate_value(&value, env);
+            env.insert(key, interpolated);
+        }
+    }
+}
+
+/// Interpolate a single value, replacing $VAR and ${VAR} with their values
+fn interpolate_value(value: &str, env: &HashMap<String, String>) -> String {
+    let mut result = value.to_string();
+
+    // Handle ${VAR} syntax first (more specific)
+    let re_braces = regex::Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").unwrap();
+    result = re_braces
+        .replace_all(&result, |caps: &regex::Captures| {
+            let var_name = &caps[1];
+            env.get(var_name)
+                .cloned()
+                .or_else(|| std::env::var(var_name).ok())
+                .unwrap_or_default()
+        })
+        .to_string();
+
+    // Handle $VAR syntax (without braces)
+    let re_simple = regex::Regex::new(r"\$([A-Za-z_][A-Za-z0-9_]*)").unwrap();
+    result = re_simple
+        .replace_all(&result, |caps: &regex::Captures| {
+            let var_name = &caps[1];
+            env.get(var_name)
+                .cloned()
+                .or_else(|| std::env::var(var_name).ok())
+                .unwrap_or_default()
+        })
+        .to_string();
+
+    result
+}
+
+/// Load all environment variables for a service
+/// Priority (highest to lowest):
+/// 1. Service-specific env_file (if specified)
+/// 2. Service cwd/.env.local (if cwd exists)
+/// 3. Service cwd/.env (if cwd exists)
+/// 4. Project root .env.local
+/// 5. Project root .env
+/// 6. Project env_files (from manifest)
+/// 7. Manifest [environment] section
+/// 8. Service env = {} section
+pub fn load_service_environment(
+    project_path: &Path,
+    manifest: &Manifest,
+    service: &Service,
+) -> HashMap<String, String> {
+    let mut env: HashMap<String, String> = HashMap::new();
+
+    // 1. Start with system environment
+    env.extend(std::env::vars());
+
+    // 2. Load project-level env_files (from manifest)
+    for env_file in &manifest.project.env_files {
+        let path = project_path.join(env_file);
+        let file_env = load_env_file(&path);
+        env.extend(file_env);
+    }
+
+    // 3. Load project root .env (if not in env_files)
+    if !manifest.project.env_files.iter().any(|f| f == ".env") {
+        let path = project_path.join(".env");
+        let file_env = load_env_file(&path);
+        env.extend(file_env);
+    }
+
+    // 4. Load project root .env.local (if not in env_files)
+    if !manifest.project.env_files.iter().any(|f| f == ".env.local") {
+        let path = project_path.join(".env.local");
+        let file_env = load_env_file(&path);
+        env.extend(file_env);
+    }
+
+    // 5. Add manifest [environment] section
+    env.extend(manifest.environment.clone());
+
+    // 6. Load service cwd .env files (if cwd is set)
+    if let Some(ref cwd) = service.cwd {
+        let service_dir = project_path.join(cwd);
+
+        // .env in service directory
+        let path = service_dir.join(".env");
+        let file_env = load_env_file(&path);
+        env.extend(file_env);
+
+        // .env.local in service directory
+        let path = service_dir.join(".env.local");
+        let file_env = load_env_file(&path);
+        env.extend(file_env);
+    }
+
+    // 7. Load service-specific env_file (if specified)
+    if let Some(ref env_file) = service.env_file {
+        let path = project_path.join(env_file);
+        let file_env = load_env_file(&path);
+        env.extend(file_env);
+    }
+
+    // 8. Add service env = {} section (highest priority)
+    env.extend(service.env.clone());
+
+    // 9. Interpolate variables
+    interpolate_env_vars(&mut env);
+
+    env
+}
+
+/// Get resolved environment for display (devhub env command)
+pub fn get_resolved_environment(
+    project_path: &Path,
+    manifest: &Manifest,
+    service: Option<&Service>,
+) -> HashMap<String, String> {
+    if let Some(svc) = service {
+        load_service_environment(project_path, manifest, svc)
+    } else {
+        // Return project-level environment only
+        let mut env: HashMap<String, String> = HashMap::new();
+
+        // Load project env_files
+        for env_file in &manifest.project.env_files {
+            let path = project_path.join(env_file);
+            env.extend(load_env_file(&path));
+        }
+
+        // Load .env and .env.local
+        env.extend(load_env_file(&project_path.join(".env")));
+        env.extend(load_env_file(&project_path.join(".env.local")));
+
+        // Add manifest environment
+        env.extend(manifest.environment.clone());
+
+        interpolate_env_vars(&mut env);
+        env
+    }
+}
 
 /// Get the log directory for a project
 fn get_log_dir(project_name: &str) -> Result<PathBuf> {
@@ -61,7 +230,7 @@ pub async fn start_service(
     project_name: &str,
     project_path: &Path,
     service: &Service,
-    global_env: &HashMap<String, String>,
+    manifest: &Manifest,
 ) -> Result<()> {
     // Handle Docker Compose services separately
     if service.service_type == ServiceType::DockerCompose {
@@ -70,7 +239,7 @@ pub async fn start_service(
 
     // Use PM2 for Node.js services if available
     if service.service_type == ServiceType::Node && is_pm2_available() {
-        return start_pm2_service(project_name, project_path, service, global_env).await;
+        return start_pm2_service(project_name, project_path, service, manifest).await;
     }
 
     // Check if already running
@@ -98,10 +267,8 @@ pub async fn start_service(
         project_path.to_path_buf()
     };
 
-    // Build environment
-    let mut env: HashMap<String, String> = std::env::vars().collect();
-    env.extend(global_env.clone());
-    env.extend(service.env.clone());
+    // Build environment from .env files and manifest settings
+    let env = load_service_environment(project_path, manifest, service);
 
     // Set up log files
     let log_dir = get_log_dir(project_name)?;
@@ -503,7 +670,7 @@ async fn start_pm2_service(
     project_name: &str,
     project_path: &Path,
     service: &Service,
-    global_env: &HashMap<String, String>,
+    manifest: &Manifest,
 ) -> Result<()> {
     let pm2_name = format!("{}:{}", project_name, service.name);
 
@@ -536,13 +703,28 @@ async fn start_pm2_service(
         service.port
     );
 
-    // Build environment string for PM2
+    // Build environment from .env files and manifest settings
+    let env = load_service_environment(project_path, manifest, service);
+
+    // Convert to PM2 environment string format
     let mut env_args = Vec::new();
-    for (key, value) in global_env {
-        env_args.push(format!("{}={}", key, value));
-    }
-    for (key, value) in &service.env {
-        env_args.push(format!("{}={}", key, value));
+    for (key, value) in &env {
+        // Skip system env vars to keep PM2 command clean - only pass custom vars
+        if !key.starts_with("PATH")
+            && !key.starts_with("HOME")
+            && !key.starts_with("USER")
+            && !key.starts_with("SHELL")
+            && !key.starts_with("TERM")
+            && !key.starts_with("LANG")
+            && !key.starts_with("LC_")
+            && !key.starts_with("SSH_")
+            && !key.starts_with("TMPDIR")
+            && !key.starts_with("XPC_")
+            && !key.starts_with("__CF")
+            && !key.starts_with("SECURITYSESSIONID")
+        {
+            env_args.push(format!("{}={}", key, value));
+        }
     }
 
     // Parse the npm/pnpm/yarn command

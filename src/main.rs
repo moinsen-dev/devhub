@@ -125,6 +125,24 @@ enum Commands {
         /// Path to the project (defaults to current directory)
         #[arg(default_value = ".")]
         path: PathBuf,
+
+        /// Only show what would be discovered (don't write devhub.toml)
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Show resolved environment variables for a project or service
+    Env {
+        /// Project name
+        project: String,
+
+        /// Service name (optional, shows all services if not specified)
+        #[arg(short, long)]
+        service: Option<String>,
+
+        /// Output format (table or export)
+        #[arg(short, long, default_value = "table")]
+        format: String,
     },
 
     /// Scan directories for projects and bulk register them
@@ -280,7 +298,12 @@ async fn main() -> Result<()> {
             service,
             follow,
         } => cmd_logs(&registry, &project, service, follow).await,
-        Commands::Discover { path } => cmd_discover(path).await,
+        Commands::Discover { path, dry_run } => cmd_discover(path, dry_run).await,
+        Commands::Env {
+            project,
+            service,
+            format,
+        } => cmd_env(project, service, format).await,
         Commands::Scan {
             paths,
             depth,
@@ -547,7 +570,7 @@ async fn cmd_start(
                 caddy::generate_config(&name, &manifest)?;
 
                 for svc in &manifest.services {
-                    let _ = process::start_service(&name, &entry.path, svc, &manifest.environment)
+                    let _ = process::start_service(&name, &entry.path, svc, &manifest)
                         .await;
                 }
 
@@ -590,7 +613,7 @@ async fn cmd_start(
     }
 
     for svc in services_to_start {
-        process::start_service(&name, &entry.path, svc, &manifest.environment).await?;
+        process::start_service(&name, &entry.path, svc, &manifest).await?;
     }
 
     // Track as recently used
@@ -830,13 +853,14 @@ async fn cmd_logs(
     Ok(())
 }
 
-async fn cmd_discover(path: PathBuf) -> Result<()> {
+async fn cmd_discover(path: PathBuf, dry_run: bool) -> Result<()> {
     let path = path.canonicalize()?;
 
     println!(
-        "{} Discovering project at {}...",
+        "{} Discovering project at {}...{}",
         "→".blue(),
-        path.display().to_string().cyan()
+        path.display().to_string().cyan(),
+        if dry_run { " (dry-run)".dimmed().to_string() } else { String::new() }
     );
 
     let discovered = discovery::discover_project(&path)?;
@@ -871,9 +895,29 @@ async fn cmd_discover(path: PathBuf) -> Result<()> {
         if let Some(port) = svc.port {
             println!("    Port: {}", port);
         }
+        if let Some(ref cwd) = svc.cwd {
+            println!("    Directory: {}", cwd.dimmed());
+        }
     }
 
-    // Ask to generate devhub.toml
+    // In dry-run mode, show what would be generated but don't write
+    if dry_run {
+        println!();
+        let manifest = discovery::to_manifest(&discovered);
+        let content = toml::to_string_pretty(&manifest)?;
+        println!("{}", "Would generate devhub.toml:".bold());
+        println!("{}", "─".repeat(50).dimmed());
+        println!("{}", content);
+        println!("{}", "─".repeat(50).dimmed());
+        println!();
+        println!(
+            "{} Run without --dry-run to generate the file",
+            "→".blue()
+        );
+        return Ok(());
+    }
+
+    // Generate devhub.toml
     println!();
     let manifest_path = path.join("devhub.toml");
     if manifest_path.exists() {
@@ -900,6 +944,137 @@ async fn cmd_discover(path: PathBuf) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Show resolved environment variables for a project or service
+async fn cmd_env(project: String, service: Option<String>, format: String) -> Result<()> {
+    let registry = Registry::load()?;
+    let (name, entry) = resolve_project(&registry, Some(project))?;
+
+    let manifest_path = entry.path.join("devhub.toml");
+    let manifest = manifest::Manifest::load(&manifest_path)?;
+
+    // Determine which services to show
+    let services: Vec<&manifest::Service> = if let Some(ref svc_name) = service {
+        manifest
+            .services
+            .iter()
+            .filter(|s| s.name == *svc_name)
+            .collect()
+    } else {
+        manifest.services.iter().collect()
+    };
+
+    if services.is_empty() {
+        if let Some(svc_name) = service {
+            anyhow::bail!("Service '{}' not found in project '{}'", svc_name, name);
+        } else {
+            anyhow::bail!("No services found in project '{}'", name);
+        }
+    }
+
+    for svc in services {
+        let env = process::get_resolved_environment(&entry.path, &manifest, Some(svc));
+
+        println!("{}", format!("Service: {}", svc.name).cyan().bold());
+        println!();
+
+        // Sort keys for consistent output
+        let mut keys: Vec<_> = env.keys().collect();
+        keys.sort();
+
+        if format == "export" {
+            // Shell export format for sourcing
+            for key in keys {
+                // Skip system vars for cleaner output
+                if !is_system_env_var(key) {
+                    let value = &env[key];
+                    // Escape single quotes in value
+                    let escaped = value.replace("'", "'\\''");
+                    println!("export {}='{}'", key, escaped);
+                }
+            }
+        } else {
+            // Table format
+            let mut custom_count = 0;
+            for key in keys {
+                if !is_system_env_var(key) {
+                    let value = &env[key];
+                    println!("  {} = {}", key.yellow(), value.dimmed());
+                    custom_count += 1;
+                }
+            }
+            if custom_count == 0 {
+                println!("  {} No custom environment variables", "·".dimmed());
+            }
+        }
+        println!();
+    }
+
+    // Show env file sources
+    println!("{}", "Environment sources (highest priority first):".dimmed());
+    println!("  1. Service env_file: {}", service.as_deref().and_then(|s| {
+        manifest.services.iter().find(|svc| svc.name == s).and_then(|svc| svc.env_file.as_deref())
+    }).unwrap_or("(none)").dimmed());
+    println!("  2. Service cwd/.env.local");
+    println!("  3. Service cwd/.env");
+    println!("  4. Project root .env.local");
+    println!("  5. Project root .env");
+    println!("  6. Manifest env_files: {:?}", manifest.project.env_files);
+    println!("  7. Manifest [environment] section");
+    println!("  8. Service env = {{}}");
+    println!();
+
+    Ok(())
+}
+
+/// Check if a variable is a system environment variable
+fn is_system_env_var(key: &str) -> bool {
+    key.starts_with("PATH")
+        || key.starts_with("HOME")
+        || key.starts_with("USER")
+        || key.starts_with("SHELL")
+        || key.starts_with("TERM")
+        || key.starts_with("LANG")
+        || key.starts_with("LC_")
+        || key.starts_with("SSH_")
+        || key.starts_with("TMPDIR")
+        || key.starts_with("XPC_")
+        || key.starts_with("__CF")
+        || key.starts_with("SECURITYSESSIONID")
+        || key.starts_with("LOGNAME")
+        || key.starts_with("PWD")
+        || key.starts_with("OLDPWD")
+        || key.starts_with("SHLVL")
+        || key.starts_with("DISPLAY")
+        || key.starts_with("COLORTERM")
+        || key.starts_with("DBUS_")
+        || key.starts_with("GNOME_")
+        || key.starts_with("GTK_")
+        || key.starts_with("QT_")
+        || key.starts_with("XDG_")
+        || key.starts_with("WINDOWID")
+        || key.starts_with("EDITOR")
+        || key.starts_with("VISUAL")
+        || key.starts_with("PAGER")
+        || key.starts_with("MANPATH")
+        || key.starts_with("INFOPATH")
+        || key.starts_with("PS1")
+        || key.starts_with("PROMPT")
+        || key == "TERM_PROGRAM"
+        || key == "TERM_PROGRAM_VERSION"
+        || key == "_"
+        || key == "ORIGINAL_XDG_CURRENT_DESKTOP"
+        || key == "Apple_PubSub_Socket_Render"
+        || key == "COMMAND_MODE"
+        || key == "MallocNanoZone"
+        || key == "VSCODE_IPC_HOOK"
+        || key == "ZDOTDIR"
+        || key == "BROWSER"
+        || key == "LSCOLORS"
+        || key == "CLICOLOR"
+        || key == "LESS"
+        || key == "LS_COLORS"
 }
 
 async fn cmd_daemon(port: u16) -> Result<()> {

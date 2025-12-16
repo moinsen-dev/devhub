@@ -29,14 +29,21 @@ Options:
 
 #### `devhub discover`
 
-Auto-detect project type and generate `devhub.toml`.
+Auto-detect project type and generate `devhub.toml`. For monorepos without a root project type, automatically scans subdirectories for services.
 
 ```bash
-devhub discover [PATH]
+devhub discover [PATH] [--dry-run]
 
 Arguments:
   PATH  Project path (default: current directory)
+
+Options:
+  --dry-run  Preview what would be discovered without writing files
 ```
+
+**Monorepo Support:**
+
+When no project type is detected at the root level, `discover` automatically scans subdirectories for project signatures (Cargo.toml, package.json, pubspec.yaml, etc.) and generates a multi-service manifest.
 
 #### `devhub register`
 
@@ -255,6 +262,42 @@ Arguments:
 
 # Usage with cd:
 cd $(devhub path my-project)
+```
+
+### Environment
+
+#### `devhub env`
+
+Show resolved environment variables for a project or service.
+
+```bash
+devhub env <PROJECT> [--service <SERVICE>] [--format <FORMAT>]
+
+Arguments:
+  PROJECT  Project name
+
+Options:
+  --service, -s  Show environment for specific service
+  --format, -f   Output format: table (default) or export
+```
+
+**Output Formats:**
+
+- `table` (default): Displays variables in a readable table format
+- `export`: Outputs in shell export format for sourcing (`export VAR='value'`)
+
+**Example:**
+
+```bash
+# Show all services' environment
+devhub env my-project
+
+# Show specific service environment
+devhub env my-project -s api
+
+# Export format (for sourcing)
+devhub env my-project -s api -f export
+eval "$(devhub env my-project -s api -f export)"
 ```
 
 ### Utilities

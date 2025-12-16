@@ -37,6 +37,8 @@ devhub status             # See everything at a glance
 
 - **One command to rule them all** - `devhub start` launches your entire stack
 - **Bulk discovery** - Scan directories and register 100+ projects at once
+- **Monorepo support** - Auto-detects multi-service projects (frontend + backend + packages)
+- **Environment file loading** - Automatic `.env` and `.env.local` support with variable interpolation
 - **Web dashboard** - Visual status, start/stop buttons, log viewer, real-time updates
 - **Fuzzy search** - Find projects fast with `devhub search`
 - **Favorites & Recent** - Star projects, track recently used
@@ -133,6 +135,7 @@ cd devhub-ui && npm install && npm run dev
 ```bash
 devhub init                    # Create devhub.toml in current directory
 devhub discover                # Auto-detect and generate devhub.toml
+devhub discover --dry-run      # Preview discovery without writing files
 devhub register [path]         # Register project with DevHub
 devhub unregister <name>       # Remove project from registry
 devhub list                    # List all registered projects
@@ -186,9 +189,12 @@ devhub code <project>          # Open project in VS Code
 devhub path <project>          # Print project path (for cd integration)
 ```
 
-### Utilities
+### Environment & Utilities
 
 ```bash
+devhub env <project>           # Show resolved environment variables
+devhub env <project> -s api    # Show env for specific service
+devhub env <project> -f export # Output in shell export format
 devhub daemon [--port 9876]    # Run API server for dashboard
 devhub completions <shell>     # Generate shell completions (bash/zsh/fish)
 ```
@@ -204,6 +210,7 @@ Each project gets a `devhub.toml` file:
 name = "my-app"
 description = "My awesome application"
 tags = ["rust", "web"]
+env_files = [".env", ".env.local"]  # Environment files to load
 
 [[services]]
 name = "api"
@@ -212,6 +219,7 @@ command = "cargo run --release"
 port = 8080
 health_check = "/health"
 subdomain = "api"           # http://api.my-app.localhost
+env_file = "api/.env"       # Service-specific env file
 
 [[services]]
 name = "frontend"
@@ -226,6 +234,22 @@ depends_on = ["api"]        # Start order
 RUST_LOG = "info"
 DATABASE_URL = "postgres://localhost/myapp"
 ```
+
+### Environment Loading Priority
+
+Environment variables are loaded in this order (later sources override earlier):
+
+1. System environment variables
+2. Project root `.env` file
+3. Project root `.env.local` file
+4. Files listed in `env_files`
+5. `[environment]` section in manifest
+6. Service-specific `env_file`
+7. Service `cwd/.env` file
+8. Service `cwd/.env.local` file
+9. Service `env = {}` section
+
+Variable interpolation is supported: `DATABASE_URL=$DB_HOST:$DB_PORT/mydb`
 
 ### Service Types
 

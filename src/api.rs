@@ -222,7 +222,7 @@ async fn start_project(
 
     // Start services
     for svc in &manifest.services {
-        if let Err(e) = process::start_service(&name, &entry.path, svc, &manifest.environment).await
+        if let Err(e) = process::start_service(&name, &entry.path, svc, &manifest).await
         {
             tracing::error!("Failed to start service {}: {}", svc.name, e);
         }
@@ -306,7 +306,7 @@ async fn start_service(
             )
         })?;
 
-    process::start_service(&name, &entry.path, svc, &manifest.environment)
+    process::start_service(&name, &entry.path, svc, &manifest)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 

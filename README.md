@@ -4,6 +4,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
+[![Release](https://img.shields.io/github/v/release/moinsen-dev/devhub)](https://github.com/moinsen-dev/devhub/releases)
+[![Docs](https://img.shields.io/badge/docs-mdbook-blue)](https://moinsen-dev.github.io/devhub/)
 
 ## The Problem
 
@@ -53,14 +55,17 @@ devhub status             # See everything at a glance
 ### 1. Install DevHub
 
 ```bash
-# From source (recommended)
-git clone https://github.com/moinsen-dev/devhub.git
-cd devhub
-cargo build --release
-cp target/release/devhub ~/.local/bin/
+# Homebrew (macOS)
+brew tap moinsen-dev/tap
+brew install devhub
 
-# Or with cargo install (when published)
-cargo install devhub
+# Or download pre-built binary
+curl -sL https://github.com/moinsen-dev/devhub/releases/latest/download/devhub-aarch64-apple-darwin.tar.gz | tar xz
+sudo mv devhub /usr/local/bin/
+
+# Or from source
+git clone https://github.com/moinsen-dev/devhub.git && cd devhub
+cargo build --release && cp target/release/devhub ~/.local/bin/
 ```
 
 ### 2. Discover Your Projects
@@ -320,7 +325,39 @@ docker logs caddy-proxy
 
 ---
 
-## Publishing / Installation
+## Installation
+
+### Homebrew (macOS)
+
+```bash
+brew tap moinsen-dev/tap
+brew install devhub
+
+# Start as background service (optional)
+brew services start devhub
+```
+
+### Pre-built Binaries
+
+Download from [GitHub Releases](https://github.com/moinsen-dev/devhub/releases):
+
+```bash
+# macOS Apple Silicon
+curl -sL https://github.com/moinsen-dev/devhub/releases/latest/download/devhub-aarch64-apple-darwin.tar.gz | tar xz
+sudo mv devhub /usr/local/bin/
+
+# macOS Intel
+curl -sL https://github.com/moinsen-dev/devhub/releases/latest/download/devhub-x86_64-apple-darwin.tar.gz | tar xz
+sudo mv devhub /usr/local/bin/
+
+# Linux x64
+curl -sL https://github.com/moinsen-dev/devhub/releases/latest/download/devhub-x86_64-unknown-linux-gnu.tar.gz | tar xz
+sudo mv devhub /usr/local/bin/
+
+# Linux ARM64
+curl -sL https://github.com/moinsen-dev/devhub/releases/latest/download/devhub-aarch64-unknown-linux-gnu.tar.gz | tar xz
+sudo mv devhub /usr/local/bin/
+```
 
 ### From Source
 
@@ -336,20 +373,6 @@ cp target/release/devhub ~/.local/bin/
 ```bash
 cargo install devhub
 ```
-
-### Homebrew (macOS) - Coming Soon
-
-```bash
-brew tap moinsen-dev/tap
-brew install devhub
-```
-
-### Pre-built Binaries - Coming Soon
-
-Download from [GitHub Releases](https://github.com/moinsen-dev/devhub/releases):
-- `devhub-x86_64-apple-darwin.tar.gz` (macOS Intel)
-- `devhub-aarch64-apple-darwin.tar.gz` (macOS Apple Silicon)
-- `devhub-x86_64-unknown-linux-gnu.tar.gz` (Linux x64)
 
 ---
 

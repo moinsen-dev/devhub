@@ -1,5 +1,7 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -17,6 +19,10 @@ pub struct Registry {
 pub struct ProjectEntry {
     pub path: PathBuf,
     pub registered_at: DateTime<Utc>,
+    #[serde(default)]
+    pub last_used: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub favorite: bool,
 }
 
 impl Registry {
@@ -54,9 +60,60 @@ impl Registry {
             ProjectEntry {
                 path: path.to_path_buf(),
                 registered_at: Utc::now(),
+                last_used: None,
+                favorite: false,
             },
         );
         Ok(())
+    }
+
+    /// Mark a project as recently used
+    pub fn touch(&mut self, name: &str) {
+        if let Some(entry) = self.projects.get_mut(name) {
+            entry.last_used = Some(Utc::now());
+        }
+    }
+
+    /// Toggle favorite status for a project
+    pub fn toggle_favorite(&mut self, name: &str) -> Option<bool> {
+        if let Some(entry) = self.projects.get_mut(name) {
+            entry.favorite = !entry.favorite;
+            Some(entry.favorite)
+        } else {
+            None
+        }
+    }
+
+    /// Set favorite status for a project
+    pub fn set_favorite(&mut self, name: &str, favorite: bool) -> bool {
+        if let Some(entry) = self.projects.get_mut(name) {
+            entry.favorite = favorite;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// List favorite projects
+    pub fn favorites(&self) -> Vec<(&String, &ProjectEntry)> {
+        let mut projects: Vec<_> = self
+            .projects
+            .iter()
+            .filter(|(_, entry)| entry.favorite)
+            .collect();
+        projects.sort_by(|a, b| a.0.cmp(b.0));
+        projects
+    }
+
+    /// List recent projects (sorted by last_used, most recent first)
+    pub fn recent(&self, limit: usize) -> Vec<(&String, &ProjectEntry)> {
+        let mut projects: Vec<_> = self
+            .projects
+            .iter()
+            .filter(|(_, entry)| entry.last_used.is_some())
+            .collect();
+        projects.sort_by(|a, b| b.1.last_used.cmp(&a.1.last_used));
+        projects.into_iter().take(limit).collect()
     }
 
     /// Unregister a project
@@ -80,6 +137,41 @@ impl Registry {
     pub fn find_by_path(&self, path: &PathBuf) -> Option<(&String, &ProjectEntry)> {
         self.projects.iter().find(|(_, entry)| &entry.path == path)
     }
+
+    /// Fuzzy search for projects by name
+    /// Returns projects sorted by match score (best match first)
+    pub fn fuzzy_search(&self, query: &str) -> Vec<(&String, &ProjectEntry, i64)> {
+        let matcher = SkimMatcherV2::default();
+        let mut matches: Vec<_> = self
+            .projects
+            .iter()
+            .filter_map(|(name, entry)| {
+                matcher
+                    .fuzzy_match(name, query)
+                    .map(|score| (name, entry, score))
+            })
+            .collect();
+
+        // Sort by score (highest first)
+        matches.sort_by(|a, b| b.2.cmp(&a.2));
+        matches
+    }
+
+    /// Find a single project by exact name or fuzzy match
+    /// Returns the best match if query doesn't match exactly
+    #[allow(dead_code)]
+    pub fn find_fuzzy(&self, query: &str) -> Option<(&String, &ProjectEntry)> {
+        // First try exact match
+        if let Some(entry) = self.projects.get(query) {
+            return Some((self.projects.keys().find(|k| *k == query).unwrap(), entry));
+        }
+
+        // Fall back to fuzzy search
+        self.fuzzy_search(query)
+            .into_iter()
+            .next()
+            .map(|(name, entry, _)| (name, entry))
+    }
 }
 
 /// Get the DevHub configuration directory
@@ -93,7 +185,6 @@ fn get_config_dir() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     #[test]
     fn test_register_and_list() {

@@ -10,6 +10,7 @@ mod caddy;
 mod config;
 mod discovery;
 mod manifest;
+mod ports;
 mod process;
 mod registry;
 
@@ -60,6 +61,14 @@ enum Commands {
         /// Start specific service only
         #[arg(short, long)]
         service: Option<String>,
+
+        /// Start all registered projects
+        #[arg(long)]
+        all: bool,
+
+        /// Start only favorite projects
+        #[arg(long)]
+        favorites: bool,
     },
 
     /// Stop project services
@@ -70,6 +79,14 @@ enum Commands {
         /// Stop specific service only
         #[arg(short, long)]
         service: Option<String>,
+
+        /// Stop all running projects
+        #[arg(long)]
+        all: bool,
+
+        /// Stop only favorite projects
+        #[arg(long)]
+        favorites: bool,
     },
 
     /// Restart project services
@@ -80,6 +97,14 @@ enum Commands {
         /// Restart specific service only
         #[arg(short, long)]
         service: Option<String>,
+
+        /// Restart all running projects
+        #[arg(long)]
+        all: bool,
+
+        /// Restart only favorite projects
+        #[arg(long)]
+        favorites: bool,
     },
 
     /// Stream logs from project services
@@ -126,6 +151,10 @@ enum Commands {
         /// Check for conflicts
         #[arg(short, long)]
         check: bool,
+
+        /// Suggest resolutions for conflicts
+        #[arg(short, long)]
+        resolve: bool,
     },
 
     /// Run the DevHub daemon (API server for dashboard)
@@ -163,6 +192,50 @@ enum Commands {
         /// Project name
         project: String,
     },
+
+    /// Search for projects (fuzzy matching)
+    Search {
+        /// Search query
+        query: String,
+
+        /// Maximum number of results
+        #[arg(short, long, default_value = "10")]
+        limit: usize,
+    },
+
+    /// Manage favorite projects
+    Fav {
+        #[command(subcommand)]
+        action: FavAction,
+    },
+
+    /// Show recently used projects
+    Recent {
+        /// Maximum number of results
+        #[arg(short, long, default_value = "10")]
+        limit: usize,
+    },
+}
+
+#[derive(Subcommand)]
+enum FavAction {
+    /// Add project to favorites
+    Add {
+        /// Project name
+        project: String,
+    },
+    /// Remove project from favorites
+    Remove {
+        /// Project name
+        project: String,
+    },
+    /// List favorite projects
+    List,
+    /// Toggle favorite status
+    Toggle {
+        /// Project name
+        project: String,
+    },
 }
 
 #[tokio::main]
@@ -184,9 +257,24 @@ async fn main() -> Result<()> {
         Commands::Unregister { name } => cmd_unregister(&mut registry, &name).await,
         Commands::List => cmd_list(&registry).await,
         Commands::Status => cmd_status(&registry).await,
-        Commands::Start { project, service } => cmd_start(&registry, project, service).await,
-        Commands::Stop { project, service } => cmd_stop(&registry, project, service).await,
-        Commands::Restart { project, service } => cmd_restart(&registry, project, service).await,
+        Commands::Start {
+            project,
+            service,
+            all,
+            favorites,
+        } => cmd_start(&mut registry, project, service, all, favorites).await,
+        Commands::Stop {
+            project,
+            service,
+            all,
+            favorites,
+        } => cmd_stop(&mut registry, project, service, all, favorites).await,
+        Commands::Restart {
+            project,
+            service,
+            all,
+            favorites,
+        } => cmd_restart(&mut registry, project, service, all, favorites).await,
         Commands::Logs {
             project,
             service,
@@ -199,12 +287,15 @@ async fn main() -> Result<()> {
             auto_register,
             dry_run,
         } => cmd_scan(&mut registry, paths, depth, auto_register, dry_run).await,
-        Commands::Ports { check } => cmd_ports(&registry, check).await,
+        Commands::Ports { check, resolve } => cmd_ports(&registry, check, resolve).await,
         Commands::Daemon { port } => cmd_daemon(port).await,
         Commands::Completions { shell } => cmd_completions(shell),
         Commands::Open { project, service } => cmd_open(&registry, &project, service).await,
         Commands::Code { project } => cmd_code(&registry, &project).await,
         Commands::Path { project } => cmd_path(&registry, &project).await,
+        Commands::Search { query, limit } => cmd_search(&registry, &query, limit).await,
+        Commands::Fav { action } => cmd_fav(&mut registry, action).await,
+        Commands::Recent { limit } => cmd_recent(&registry, limit).await,
     }
 }
 
@@ -402,10 +493,77 @@ async fn cmd_status(registry: &Registry) -> Result<()> {
 }
 
 async fn cmd_start(
-    registry: &Registry,
+    registry: &mut Registry,
     project: Option<String>,
     service: Option<String>,
+    all: bool,
+    favorites_only: bool,
 ) -> Result<()> {
+    // Handle batch operations
+    if all || favorites_only {
+        let projects_to_start: Vec<_> = if favorites_only {
+            registry
+                .favorites()
+                .into_iter()
+                .map(|(n, e)| (n.clone(), e.clone()))
+                .collect()
+        } else {
+            registry
+                .list()
+                .into_iter()
+                .map(|(n, e)| (n.clone(), e.clone()))
+                .collect()
+        };
+
+        if projects_to_start.is_empty() {
+            println!(
+                "{}",
+                if favorites_only {
+                    "No favorite projects found."
+                } else {
+                    "No projects registered."
+                }
+            );
+            return Ok(());
+        }
+
+        let label = if favorites_only {
+            "favorite projects"
+        } else {
+            "all projects"
+        };
+        println!(
+            "{} Starting {} ({})...",
+            "→".blue(),
+            label,
+            projects_to_start.len()
+        );
+        println!();
+
+        for (name, entry) in projects_to_start {
+            let manifest_path = entry.path.join("devhub.toml");
+            if let Ok(manifest) = manifest::Manifest::load(&manifest_path) {
+                println!("{} {}...", "→".blue(), name.cyan());
+                caddy::generate_config(&name, &manifest)?;
+
+                for svc in &manifest.services {
+                    let _ = process::start_service(&name, &entry.path, svc, &manifest.environment)
+                        .await;
+                }
+
+                // Track as recently used
+                registry.touch(&name);
+            }
+        }
+
+        registry.save()?;
+        caddy::reload()?;
+        println!();
+        println!("{} Started {}", "✓".green(), label);
+        return Ok(());
+    }
+
+    // Single project start
     let (name, entry) = resolve_project(registry, project)?;
     let manifest_path = entry.path.join("devhub.toml");
     let manifest = manifest::Manifest::load(&manifest_path)?;
@@ -435,16 +593,87 @@ async fn cmd_start(
         process::start_service(&name, &entry.path, svc, &manifest.environment).await?;
     }
 
+    // Track as recently used
+    registry.touch(&name);
+    registry.save()?;
+
     println!("{} Started {}", "✓".green(), name.cyan());
 
     Ok(())
 }
 
 async fn cmd_stop(
-    registry: &Registry,
+    registry: &mut Registry,
     project: Option<String>,
     service: Option<String>,
+    all: bool,
+    favorites_only: bool,
 ) -> Result<()> {
+    // Handle batch operations
+    if all || favorites_only {
+        let projects_to_stop: Vec<_> = if favorites_only {
+            registry
+                .favorites()
+                .into_iter()
+                .map(|(n, e)| (n.clone(), e.clone()))
+                .collect()
+        } else {
+            registry
+                .list()
+                .into_iter()
+                .map(|(n, e)| (n.clone(), e.clone()))
+                .collect()
+        };
+
+        if projects_to_stop.is_empty() {
+            println!(
+                "{}",
+                if favorites_only {
+                    "No favorite projects found."
+                } else {
+                    "No projects registered."
+                }
+            );
+            return Ok(());
+        }
+
+        let label = if favorites_only {
+            "favorite projects"
+        } else {
+            "all projects"
+        };
+        println!(
+            "{} Stopping {} ({})...",
+            "→".blue(),
+            label,
+            projects_to_stop.len()
+        );
+        println!();
+
+        for (name, entry) in projects_to_stop {
+            let manifest_path = entry.path.join("devhub.toml");
+            if let Ok(manifest) = manifest::Manifest::load(&manifest_path) {
+                // Check if any service is running
+                let any_running = manifest
+                    .services
+                    .iter()
+                    .any(|s| process::is_port_in_use(s.port));
+
+                if any_running {
+                    println!("{} {}...", "→".blue(), name.cyan());
+                    for svc in &manifest.services {
+                        let _ = process::stop_service(&name, svc).await;
+                    }
+                }
+            }
+        }
+
+        println!();
+        println!("{} Stopped {}", "✓".green(), label);
+        return Ok(());
+    }
+
+    // Single project stop
     let (name, entry) = resolve_project(registry, project)?;
     let manifest_path = entry.path.join("devhub.toml");
     let manifest = manifest::Manifest::load(&manifest_path)?;
@@ -471,13 +700,22 @@ async fn cmd_stop(
 }
 
 async fn cmd_restart(
-    registry: &Registry,
+    registry: &mut Registry,
     project: Option<String>,
     service: Option<String>,
+    all: bool,
+    favorites_only: bool,
 ) -> Result<()> {
-    cmd_stop(registry, project.clone(), service.clone()).await?;
+    cmd_stop(
+        registry,
+        project.clone(),
+        service.clone(),
+        all,
+        favorites_only,
+    )
+    .await?;
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-    cmd_start(registry, project, service).await?;
+    cmd_start(registry, project, service, all, favorites_only).await?;
     Ok(())
 }
 
@@ -952,7 +1190,11 @@ fn scan_directory(
 }
 
 /// Show port allocations
-async fn cmd_ports(registry: &Registry, check_conflicts: bool) -> Result<()> {
+async fn cmd_ports(
+    registry: &Registry,
+    check_conflicts: bool,
+    show_resolutions: bool,
+) -> Result<()> {
     let projects = registry.list();
 
     if projects.is_empty() {
@@ -960,58 +1202,66 @@ async fn cmd_ports(registry: &Registry, check_conflicts: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Collect all port allocations
-    let mut port_map: std::collections::HashMap<u16, Vec<(String, String)>> =
-        std::collections::HashMap::new();
-
-    for (name, entry) in &projects {
-        let manifest_path = entry.path.join("devhub.toml");
-        if let Ok(manifest) = manifest::Manifest::load(&manifest_path) {
-            for service in &manifest.services {
-                port_map
-                    .entry(service.port)
-                    .or_default()
-                    .push((name.to_string(), service.name.clone()));
-            }
-        }
-    }
+    // Use the ports module to collect allocations
+    let port_map = ports::collect_allocated_ports(registry);
 
     // Sort by port
-    let mut ports: Vec<_> = port_map.iter().collect();
-    ports.sort_by_key(|(port, _)| *port);
+    let mut ports_sorted: Vec<_> = port_map.iter().collect();
+    ports_sorted.sort_by_key(|(port, _)| *port);
 
     println!("{}", "Port Allocations:".bold());
     println!();
 
+    // Show port ranges info
+    println!("{}", "Port Ranges:".dimmed());
+    for range in ports::PORT_RANGES {
+        println!(
+            "  {} {}-{}: {}",
+            "•".dimmed(),
+            range.range.start(),
+            range.range.end(),
+            range.description.dimmed()
+        );
+    }
+    println!();
+
     // Group by range
     println!("  {} (3000-3099)", "Web Frontends".cyan());
-    for (port, services) in ports.iter().filter(|(p, _)| **p >= 3000 && **p < 3100) {
+    for (port, services) in ports_sorted
+        .iter()
+        .filter(|(p, _)| **p >= 3000 && **p < 3100)
+    {
         print_port_line(**port, services, check_conflicts);
     }
     println!();
 
     println!("  {} (8000-8099)", "APIs".cyan());
-    for (port, services) in ports.iter().filter(|(p, _)| **p >= 8000 && **p < 8100) {
+    for (port, services) in ports_sorted
+        .iter()
+        .filter(|(p, _)| **p >= 8000 && **p < 8100)
+    {
         print_port_line(**port, services, check_conflicts);
     }
     println!();
 
     println!("  {} (other)", "Other".cyan());
-    for (port, services) in ports
+    for (port, services) in ports_sorted
         .iter()
         .filter(|(p, _)| !(**p >= 3000 && **p < 3100 || **p >= 8000 && **p < 8100))
     {
         print_port_line(**port, services, check_conflicts);
     }
 
-    if check_conflicts {
+    // Find and display conflicts
+    let conflicts = ports::find_conflicts(&port_map);
+
+    if check_conflicts || show_resolutions {
         println!();
-        let conflicts: Vec<_> = port_map.iter().filter(|(_, v)| v.len() > 1).collect();
         if conflicts.is_empty() {
             println!("{} No port conflicts detected", "✓".green());
         } else {
             println!("{} {} port conflicts detected:", "!".red(), conflicts.len());
-            for (port, services) in conflicts {
+            for (port, services) in &conflicts {
                 println!(
                     "    Port {}: {}",
                     port.to_string().red(),
@@ -1021,6 +1271,42 @@ async fn cmd_ports(registry: &Registry, check_conflicts: bool) -> Result<()> {
                         .collect::<Vec<_>>()
                         .join(", ")
                 );
+            }
+        }
+    }
+
+    // Show resolution suggestions if requested
+    if show_resolutions && !conflicts.is_empty() {
+        println!();
+        println!("{}", "Suggested Resolutions:".bold());
+        println!();
+
+        let resolutions = ports::suggest_alternatives(&conflicts, &port_map);
+
+        if resolutions.is_empty() {
+            println!("  {} No automatic resolutions available", "!".yellow());
+        } else {
+            for resolution in &resolutions {
+                println!(
+                    "  {} Move {}/{} from port {} to port {}",
+                    "→".blue(),
+                    resolution.project.cyan(),
+                    resolution.service,
+                    resolution.original_port.to_string().red(),
+                    resolution.suggested_port.to_string().green()
+                );
+                println!(
+                    "    (keeps {}/{} on port {})",
+                    resolution.keeper_project.dimmed(),
+                    resolution.keeper_service.dimmed(),
+                    resolution.original_port.to_string().dimmed()
+                );
+                println!();
+            }
+
+            println!("{}", "To apply:".dimmed());
+            for resolution in &resolutions {
+                println!("  {}", resolution.fix_command().dimmed());
             }
         }
     }
@@ -1192,5 +1478,170 @@ fn resolve_project(
                 "No project found for current directory. Specify project name or run from a registered project directory."
             )
         }
+    }
+}
+
+/// Search for projects with fuzzy matching
+async fn cmd_search(registry: &Registry, query: &str, limit: usize) -> Result<()> {
+    let results = registry.fuzzy_search(query);
+
+    if results.is_empty() {
+        println!("No projects found matching '{}'", query);
+        return Ok(());
+    }
+
+    println!("{}", "Search Results:".bold());
+    println!();
+
+    for (name, entry, score) in results.into_iter().take(limit) {
+        let running = check_any_service_running(&entry.path);
+        let status_icon = if running {
+            "●".green()
+        } else {
+            "○".dimmed()
+        };
+        let fav_icon = if entry.favorite { "★ " } else { "" };
+
+        println!(
+            "  {} {}{} {} (score: {})",
+            status_icon,
+            fav_icon.yellow(),
+            name.cyan(),
+            entry.path.display().to_string().dimmed(),
+            score.to_string().dimmed()
+        );
+    }
+
+    Ok(())
+}
+
+/// Check if any service is running for a project
+fn check_any_service_running(path: &std::path::Path) -> bool {
+    let manifest_path = path.join("devhub.toml");
+    if let Ok(manifest) = manifest::Manifest::load(&manifest_path) {
+        for service in &manifest.services {
+            if process::is_port_in_use(service.port) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Manage favorite projects
+async fn cmd_fav(registry: &mut Registry, action: FavAction) -> Result<()> {
+    match action {
+        FavAction::Add { project } => {
+            if registry.set_favorite(&project, true) {
+                registry.save()?;
+                println!("{} Added {} to favorites", "★".yellow(), project.cyan());
+            } else {
+                println!("{} Project '{}' not found", "!".red(), project);
+            }
+        }
+        FavAction::Remove { project } => {
+            if registry.set_favorite(&project, false) {
+                registry.save()?;
+                println!("{} Removed {} from favorites", "☆".dimmed(), project.cyan());
+            } else {
+                println!("{} Project '{}' not found", "!".red(), project);
+            }
+        }
+        FavAction::List => {
+            let favorites = registry.favorites();
+            if favorites.is_empty() {
+                println!("No favorite projects. Add one with: devhub fav add <project>");
+                return Ok(());
+            }
+
+            println!("{}", "Favorite Projects:".bold());
+            println!();
+
+            for (name, entry) in favorites {
+                let running = check_any_service_running(&entry.path);
+                let status_icon = if running {
+                    "●".green()
+                } else {
+                    "○".dimmed()
+                };
+
+                println!(
+                    "  {} {} {}",
+                    status_icon,
+                    name.cyan(),
+                    entry.path.display().to_string().dimmed()
+                );
+            }
+        }
+        FavAction::Toggle { project } => {
+            if let Some(is_fav) = registry.toggle_favorite(&project) {
+                registry.save()?;
+                if is_fav {
+                    println!("{} Added {} to favorites", "★".yellow(), project.cyan());
+                } else {
+                    println!("{} Removed {} from favorites", "☆".dimmed(), project.cyan());
+                }
+            } else {
+                println!("{} Project '{}' not found", "!".red(), project);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Show recently used projects
+async fn cmd_recent(registry: &Registry, limit: usize) -> Result<()> {
+    let recent = registry.recent(limit);
+
+    if recent.is_empty() {
+        println!("No recent projects. Start or open a project to track usage.");
+        return Ok(());
+    }
+
+    println!("{}", "Recent Projects:".bold());
+    println!();
+
+    for (name, entry) in recent {
+        let running = check_any_service_running(&entry.path);
+        let status_icon = if running {
+            "●".green()
+        } else {
+            "○".dimmed()
+        };
+        let fav_icon = if entry.favorite { "★ " } else { "" };
+
+        let time_ago = if let Some(last_used) = entry.last_used {
+            format_time_ago(last_used)
+        } else {
+            "never".to_string()
+        };
+
+        println!(
+            "  {} {}{} {} ({})",
+            status_icon,
+            fav_icon.yellow(),
+            name.cyan(),
+            entry.path.display().to_string().dimmed(),
+            time_ago.dimmed()
+        );
+    }
+
+    Ok(())
+}
+
+/// Format a timestamp as "X ago"
+fn format_time_ago(dt: chrono::DateTime<chrono::Utc>) -> String {
+    let now = chrono::Utc::now();
+    let duration = now.signed_duration_since(dt);
+
+    if duration.num_days() > 0 {
+        format!("{}d ago", duration.num_days())
+    } else if duration.num_hours() > 0 {
+        format!("{}h ago", duration.num_hours())
+    } else if duration.num_minutes() > 0 {
+        format!("{}m ago", duration.num_minutes())
+    } else {
+        "just now".to_string()
     }
 }

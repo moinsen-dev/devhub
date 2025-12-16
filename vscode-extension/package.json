@@ -1,0 +1,197 @@
+{
+  "name": "devhub-commander",
+  "displayName": "DevHub Commander",
+  "description": "Manage your DevHub projects directly from VS Code",
+  "version": "0.1.0",
+  "publisher": "moinsen-dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/moinsen-dev/devhub"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "devhub",
+    "project manager",
+    "process manager",
+    "development"
+  ],
+  "activationEvents": [
+    "workspaceContains:devhub.toml",
+    "onView:devhubProjects"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "devhub",
+          "title": "DevHub",
+          "icon": "resources/devhub-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "devhub": [
+        {
+          "id": "devhubProjects",
+          "name": "Projects",
+          "icon": "resources/devhub-icon.svg"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "devhub.refreshProjects",
+        "title": "Refresh Projects",
+        "category": "DevHub",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "devhub.startProject",
+        "title": "Start Project",
+        "category": "DevHub",
+        "icon": "$(play)"
+      },
+      {
+        "command": "devhub.stopProject",
+        "title": "Stop Project",
+        "category": "DevHub",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "devhub.restartProject",
+        "title": "Restart Project",
+        "category": "DevHub",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "devhub.startService",
+        "title": "Start Service",
+        "category": "DevHub",
+        "icon": "$(play)"
+      },
+      {
+        "command": "devhub.stopService",
+        "title": "Stop Service",
+        "category": "DevHub",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "devhub.showLogs",
+        "title": "Show Logs",
+        "category": "DevHub",
+        "icon": "$(output)"
+      },
+      {
+        "command": "devhub.openInBrowser",
+        "title": "Open in Browser",
+        "category": "DevHub",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "devhub.discoverProject",
+        "title": "Discover Project",
+        "category": "DevHub"
+      },
+      {
+        "command": "devhub.openDashboard",
+        "title": "Open Dashboard",
+        "category": "DevHub"
+      },
+      {
+        "command": "devhub.toggleFavorite",
+        "title": "Toggle Favorite",
+        "category": "DevHub",
+        "icon": "$(star)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "devhub.refreshProjects",
+          "when": "view == devhubProjects",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "devhub.startProject",
+          "when": "view == devhubProjects && viewItem == project",
+          "group": "inline@1"
+        },
+        {
+          "command": "devhub.stopProject",
+          "when": "view == devhubProjects && viewItem == project",
+          "group": "inline@2"
+        },
+        {
+          "command": "devhub.showLogs",
+          "when": "view == devhubProjects && viewItem == project",
+          "group": "inline@3"
+        },
+        {
+          "command": "devhub.startService",
+          "when": "view == devhubProjects && viewItem == service",
+          "group": "inline@1"
+        },
+        {
+          "command": "devhub.stopService",
+          "when": "view == devhubProjects && viewItem == service",
+          "group": "inline@2"
+        },
+        {
+          "command": "devhub.openInBrowser",
+          "when": "view == devhubProjects && viewItem =~ /project|service/",
+          "group": "navigation"
+        },
+        {
+          "command": "devhub.toggleFavorite",
+          "when": "view == devhubProjects && viewItem == project",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "DevHub",
+      "properties": {
+        "devhub.cliPath": {
+          "type": "string",
+          "default": "devhub",
+          "description": "Path to the devhub CLI executable"
+        },
+        "devhub.refreshInterval": {
+          "type": "number",
+          "default": 5000,
+          "description": "Refresh interval for project status in milliseconds"
+        },
+        "devhub.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show DevHub status in the status bar"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "eslint": "^8.55.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}

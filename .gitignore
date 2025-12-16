@@ -1,7 +1,6 @@
 # Rust build artifacts
 /target/
 **/*.rs.bk
-Cargo.lock
 
 # IDE
 .idea/
@@ -19,8 +18,10 @@ Cargo.lock
 *.log
 logs/
 
-# Plan files (local development notes)
+# Internal development notes
 plan.md
+pid.md
+*.local.md
 
 # Local configuration
 .env
@@ -53,3 +54,7 @@ coverage/
 *.tmp
 *.temp
 .cache/
+
+# Proxy auto-generated configs (keep .gitkeep)
+proxy/sites.d/*.caddy
+!proxy/sites.d/.gitkeep

@@ -1,0 +1,86 @@
+# DevHub Shared Development Reverse Proxy
+#
+# This Caddy server routes *.localhost domains to your development services.
+# DevHub auto-generates project configs in sites.d/ when you run `devhub start`.
+#
+# SETUP:
+#   cd proxy && docker compose up -d
+#
+# USAGE:
+#   devhub start my-project    # Auto-creates sites.d/my-project.caddy
+#   # Access: http://my-project.localhost
+
+# Global options
+{
+    # Disable automatic HTTPS for *.localhost domains
+    # (browsers trust localhost without certs)
+    auto_https off
+
+    # Enable admin API for runtime config inspection
+    admin localhost:2019
+
+    # Log format
+    log {
+        output stdout
+        format console
+        level INFO
+    }
+}
+
+# Default landing page - shows available sites
+http://localhost, http://proxy.localhost {
+    header Content-Type text/html
+    respond <<HTML
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DevHub Proxy</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; background: #1a1a2e; color: #eee; }
+        h1 { color: #22c55e; }
+        .info { background: #16213e; padding: 20px; border-radius: 8px; margin: 20px 0; border: 1px solid #0f3460; }
+        code { background: #0f3460; padding: 2px 6px; border-radius: 4px; color: #22c55e; }
+        pre { background: #0f0f1a; padding: 15px; border-radius: 8px; overflow-x: auto; }
+        a { color: #22c55e; }
+        .status { display: inline-block; width: 10px; height: 10px; background: #22c55e; border-radius: 50%; margin-right: 8px; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    </style>
+</head>
+<body>
+    <h1>DevHub Proxy</h1>
+    <div class="info">
+        <p><span class="status"></span><strong>Status:</strong> Running</p>
+        <p>This Caddy server routes <code>*.localhost</code> domains to your development services.</p>
+        <p><a href="http://devhub.localhost">Open DevHub Dashboard →</a></p>
+    </div>
+
+    <h2>Quick Start</h2>
+    <pre>
+# Register and start a project
+cd ~/my-project
+devhub init
+devhub register
+devhub start
+
+# Access your service at:
+# http://my-project.localhost
+    </pre>
+
+    <h2>Manual Setup</h2>
+    <pre>
+# Create sites.d/myapp.caddy with:
+http://myapp.localhost {
+    reverse_proxy host.docker.internal:3000
+}
+
+# Reload Caddy
+docker exec caddy-proxy caddy reload --config /etc/caddy/Caddyfile
+    </pre>
+</body>
+</html>
+HTML
+}
+
+# Import all project configurations
+# DevHub auto-generates these when you run `devhub start`
+import /etc/caddy/sites.d/*.caddy

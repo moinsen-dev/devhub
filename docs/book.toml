@@ -1,0 +1,28 @@
+[book]
+title = "DevHub Documentation"
+authors = ["Moinsen Dev"]
+description = "Multi-project development environment manager"
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/moinsen-dev/devhub"
+edit-url-template = "https://github.com/moinsen-dev/devhub/edit/main/docs/{path}"
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.playground]
+editable = false
+
+[output.html.search]
+enable = true
+limit-results = 30
+teaser-word-count = 30
+use-hierarchical-topic-separation = true

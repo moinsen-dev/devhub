@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Label must match filename without .plist -->
+    <key>Label</key>
+    <string>com.moinsen.devhub</string>
+
+    <!-- Path to the devhub binary -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/devhub</string>
+        <string>daemon</string>
+        <string>--port</string>
+        <string>9876</string>
+    </array>
+
+    <!-- Start automatically at login -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Keep the daemon running -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Restart if it crashes -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Log files -->
+    <key>StandardOutPath</key>
+    <string>/tmp/devhub.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/devhub.err.log</string>
+
+    <!-- Working directory -->
+    <key>WorkingDirectory</key>
+    <string>/tmp</string>
+
+    <!-- Environment variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>RUST_LOG</key>
+        <string>info</string>
+    </dict>
+</dict>
+</plist>

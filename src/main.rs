@@ -1,6 +1,8 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::{generate, Shell};
 use colored::Colorize;
+use std::io;
 use std::path::PathBuf;
 
 mod api;
@@ -100,11 +102,66 @@ enum Commands {
         path: PathBuf,
     },
 
+    /// Scan directories for projects and bulk register them
+    Scan {
+        /// Directories to scan (defaults to ~/work/moinsen/{ideas,opensource,apps})
+        #[arg(num_args = 0..)]
+        paths: Vec<PathBuf>,
+
+        /// Maximum depth to scan (default: 2)
+        #[arg(short, long, default_value = "2")]
+        depth: usize,
+
+        /// Auto-register discovered projects without prompting
+        #[arg(short, long)]
+        auto_register: bool,
+
+        /// Only show what would be discovered (dry run)
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Show port allocations across all projects
+    Ports {
+        /// Check for conflicts
+        #[arg(short, long)]
+        check: bool,
+    },
+
     /// Run the DevHub daemon (API server for dashboard)
     Daemon {
         /// Port to listen on
         #[arg(short, long, default_value = "9876")]
         port: u16,
+    },
+
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+
+    /// Open a project in the default browser
+    Open {
+        /// Project name
+        project: String,
+
+        /// Service name (optional, opens main service if not specified)
+        #[arg(short, long)]
+        service: Option<String>,
+    },
+
+    /// Open a project in VS Code
+    Code {
+        /// Project name
+        project: String,
+    },
+
+    /// Print a project's path (for cd integration)
+    Path {
+        /// Project name
+        project: String,
     },
 }
 
@@ -136,7 +193,18 @@ async fn main() -> Result<()> {
             follow,
         } => cmd_logs(&registry, &project, service, follow).await,
         Commands::Discover { path } => cmd_discover(path).await,
+        Commands::Scan {
+            paths,
+            depth,
+            auto_register,
+            dry_run,
+        } => cmd_scan(&mut registry, paths, depth, auto_register, dry_run).await,
+        Commands::Ports { check } => cmd_ports(&registry, check).await,
         Commands::Daemon { port } => cmd_daemon(port).await,
+        Commands::Completions { shell } => cmd_completions(shell),
+        Commands::Open { project, service } => cmd_open(&registry, &project, service).await,
+        Commands::Code { project } => cmd_code(&registry, &project).await,
+        Commands::Path { project } => cmd_path(&registry, &project).await,
     }
 }
 
@@ -651,6 +719,462 @@ async fn shutdown_signal() {
     tokio::signal::ctrl_c()
         .await
         .expect("Failed to install CTRL+C signal handler");
+}
+
+/// Scan directories for projects
+async fn cmd_scan(
+    registry: &mut Registry,
+    paths: Vec<PathBuf>,
+    max_depth: usize,
+    auto_register: bool,
+    dry_run: bool,
+) -> Result<()> {
+    // Default paths if none provided
+    let scan_paths = if paths.is_empty() {
+        let home = directories::BaseDirs::new()
+            .map(|d| d.home_dir().to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("~"));
+        let moinsen = home.join("work/moinsen");
+        vec![
+            moinsen.join("ideas"),
+            moinsen.join("opensource"),
+            moinsen.join("apps"),
+        ]
+    } else {
+        paths
+    };
+
+    println!("{}", "Scanning for projects...".bold());
+    println!();
+
+    let mut discovered_projects = Vec::new();
+    let mut already_registered = 0;
+    let mut new_projects = 0;
+
+    for base_path in &scan_paths {
+        if !base_path.exists() {
+            println!(
+                "  {} {} (not found)",
+                "!".yellow(),
+                base_path.display().to_string().dimmed()
+            );
+            continue;
+        }
+
+        println!(
+            "  {} Scanning {}...",
+            "→".blue(),
+            base_path.display().to_string().cyan()
+        );
+
+        // Scan subdirectories
+        scan_directory(
+            base_path,
+            0,
+            max_depth,
+            registry,
+            &mut discovered_projects,
+            &mut already_registered,
+        )?;
+    }
+
+    println!();
+    println!("{}", "Scan Results:".bold());
+    println!();
+
+    if discovered_projects.is_empty() {
+        println!("  No new projects found.");
+        if already_registered > 0 {
+            println!(
+                "  {} projects already registered.",
+                already_registered.to_string().cyan()
+            );
+        }
+        return Ok(());
+    }
+
+    // Group by type
+    let mut by_type: std::collections::HashMap<String, Vec<&(PathBuf, discovery::DiscoveredProject)>> =
+        std::collections::HashMap::new();
+    for item in &discovered_projects {
+        by_type
+            .entry(item.1.project_type.to_string())
+            .or_default()
+            .push(item);
+    }
+
+    for (project_type, projects) in &by_type {
+        println!("  {} {}:", project_type.yellow(), format!("({})", projects.len()).dimmed());
+        for (path, discovered) in projects {
+            let services_str = if discovered.services.is_empty() {
+                "no services".dimmed().to_string()
+            } else {
+                discovered
+                    .services
+                    .iter()
+                    .map(|s| {
+                        if let Some(port) = s.port {
+                            format!("{}:{}", s.name, port)
+                        } else {
+                            s.name.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            println!(
+                "    {} {} - {}",
+                "•".dimmed(),
+                discovered.name.cyan(),
+                services_str.dimmed()
+            );
+        }
+        println!();
+    }
+
+    println!(
+        "Found {} new projects ({} already registered)",
+        discovered_projects.len().to_string().green(),
+        already_registered.to_string().cyan()
+    );
+
+    if dry_run {
+        println!();
+        println!("{} Dry run - no changes made", "!".yellow());
+        return Ok(());
+    }
+
+    if auto_register {
+        println!();
+        println!("{} Auto-registering projects...", "→".blue());
+        println!();
+
+        for (path, discovered) in &discovered_projects {
+            // Generate devhub.toml if it doesn't exist
+            let manifest_path = path.join("devhub.toml");
+            if !manifest_path.exists() {
+                let manifest = discovery::to_manifest(discovered);
+                let content = toml::to_string_pretty(&manifest)?;
+                std::fs::write(&manifest_path, &content)?;
+            }
+
+            // Register the project
+            registry.register(&discovered.name, path)?;
+            new_projects += 1;
+            println!(
+                "  {} Registered {}",
+                "✓".green(),
+                discovered.name.cyan()
+            );
+        }
+
+        registry.save()?;
+        println!();
+        println!(
+            "{} Registered {} new projects",
+            "✓".green(),
+            new_projects.to_string().cyan()
+        );
+    } else {
+        println!();
+        println!("Run with {} to register these projects.", "--auto-register".cyan());
+    }
+
+    Ok(())
+}
+
+/// Recursively scan a directory for projects
+fn scan_directory(
+    path: &PathBuf,
+    current_depth: usize,
+    max_depth: usize,
+    registry: &Registry,
+    discovered: &mut Vec<(PathBuf, discovery::DiscoveredProject)>,
+    already_registered: &mut usize,
+) -> Result<()> {
+    if current_depth > max_depth {
+        return Ok(());
+    }
+
+    // Check if this is a project directory
+    let is_project = path.join("Cargo.toml").exists()
+        || path.join("package.json").exists()
+        || path.join("pubspec.yaml").exists()
+        || path.join("pyproject.toml").exists()
+        || path.join("go.mod").exists()
+        || path.join("docker-compose.yml").exists()
+        || path.join("docker-compose.yaml").exists();
+
+    if is_project {
+        // Check if already registered
+        if registry.find_by_path(path).is_some() {
+            *already_registered += 1;
+            return Ok(());
+        }
+
+        // Discover project details
+        if let Ok(project) = discovery::discover_project(path) {
+            discovered.push((path.clone(), project));
+        }
+        return Ok(());
+    }
+
+    // Recurse into subdirectories
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                // Skip hidden directories and common non-project dirs
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with('.')
+                    || name_str == "node_modules"
+                    || name_str == "target"
+                    || name_str == "build"
+                    || name_str == "dist"
+                    || name_str == "__pycache__"
+                    || name_str == ".git"
+                {
+                    continue;
+                }
+                scan_directory(
+                    &entry_path,
+                    current_depth + 1,
+                    max_depth,
+                    registry,
+                    discovered,
+                    already_registered,
+                )?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Show port allocations
+async fn cmd_ports(registry: &Registry, check_conflicts: bool) -> Result<()> {
+    let projects = registry.list();
+
+    if projects.is_empty() {
+        println!("No projects registered.");
+        return Ok(());
+    }
+
+    // Collect all port allocations
+    let mut port_map: std::collections::HashMap<u16, Vec<(String, String)>> =
+        std::collections::HashMap::new();
+
+    for (name, entry) in &projects {
+        let manifest_path = entry.path.join("devhub.toml");
+        if let Ok(manifest) = manifest::Manifest::load(&manifest_path) {
+            for service in &manifest.services {
+                port_map
+                    .entry(service.port)
+                    .or_default()
+                    .push((name.to_string(), service.name.clone()));
+            }
+        }
+    }
+
+    // Sort by port
+    let mut ports: Vec<_> = port_map.iter().collect();
+    ports.sort_by_key(|(port, _)| *port);
+
+    println!("{}", "Port Allocations:".bold());
+    println!();
+
+    // Group by range
+    println!("  {} (3000-3099)", "Web Frontends".cyan());
+    for (port, services) in ports.iter().filter(|(p, _)| **p >= 3000 && **p < 3100) {
+        print_port_line(**port, services, check_conflicts);
+    }
+    println!();
+
+    println!("  {} (8000-8099)", "APIs".cyan());
+    for (port, services) in ports.iter().filter(|(p, _)| **p >= 8000 && **p < 8100) {
+        print_port_line(**port, services, check_conflicts);
+    }
+    println!();
+
+    println!("  {} (other)", "Other".cyan());
+    for (port, services) in ports
+        .iter()
+        .filter(|(p, _)| !(**p >= 3000 && **p < 3100) && !(**p >= 8000 && **p < 8100))
+    {
+        print_port_line(**port, services, check_conflicts);
+    }
+
+    if check_conflicts {
+        println!();
+        let conflicts: Vec<_> = port_map.iter().filter(|(_, v)| v.len() > 1).collect();
+        if conflicts.is_empty() {
+            println!("{} No port conflicts detected", "✓".green());
+        } else {
+            println!(
+                "{} {} port conflicts detected:",
+                "!".red(),
+                conflicts.len()
+            );
+            for (port, services) in conflicts {
+                println!(
+                    "    Port {}: {}",
+                    port.to_string().red(),
+                    services
+                        .iter()
+                        .map(|(p, s)| format!("{}/{}", p, s))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn print_port_line(port: u16, services: &Vec<(String, String)>, check_conflicts: bool) {
+    let in_use = process::is_port_in_use(port);
+    let status_icon = if in_use { "●".green() } else { "○".dimmed() };
+    let conflict = services.len() > 1;
+    let conflict_icon = if conflict && check_conflicts {
+        " ⚠".red().to_string()
+    } else {
+        String::new()
+    };
+
+    let services_str = services
+        .iter()
+        .map(|(p, s)| format!("{}/{}", p, s))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    println!(
+        "    {} {} → {}{}",
+        status_icon,
+        format!("{:5}", port).cyan(),
+        services_str,
+        conflict_icon
+    );
+}
+
+/// Generate shell completions
+fn cmd_completions(shell: Shell) -> Result<()> {
+    let mut cmd = Cli::command();
+    let name = cmd.get_name().to_string();
+    generate(shell, &mut cmd, name, &mut io::stdout());
+    Ok(())
+}
+
+/// Open a project in the browser
+async fn cmd_open(registry: &Registry, project: &str, service: Option<String>) -> Result<()> {
+    let entry = registry
+        .get(project)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", project))?;
+
+    let manifest_path = entry.path.join("devhub.toml");
+    let manifest = manifest::Manifest::load(&manifest_path)?;
+
+    // Find the service to open
+    let svc = if let Some(ref service_name) = service {
+        manifest
+            .services
+            .iter()
+            .find(|s| s.name == *service_name)
+            .ok_or_else(|| anyhow::anyhow!("Service '{}' not found", service_name))?
+    } else {
+        manifest
+            .services
+            .iter()
+            .find(|s| s.main)
+            .or_else(|| manifest.services.first())
+            .ok_or_else(|| anyhow::anyhow!("No services found"))?
+    };
+
+    // Build the URL
+    let url = if svc.main {
+        format!("http://{}.localhost", project)
+    } else {
+        let subdomain = svc.subdomain.as_ref().unwrap_or(&svc.name);
+        format!("http://{}.{}.localhost", subdomain, project)
+    };
+
+    // Check if running
+    if !process::is_port_in_use(svc.port) {
+        println!(
+            "{} Service '{}' is not running (port {})",
+            "!".yellow(),
+            svc.name,
+            svc.port
+        );
+        println!("  Run 'devhub start {}' first", project);
+        return Ok(());
+    }
+
+    println!(
+        "{} Opening {} in browser...",
+        "→".blue(),
+        url.cyan()
+    );
+
+    // Open in default browser
+    #[cfg(target_os = "macos")]
+    {
+        tokio::process::Command::new("open")
+            .arg(&url)
+            .output()
+            .await?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        tokio::process::Command::new("xdg-open")
+            .arg(&url)
+            .output()
+            .await?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        tokio::process::Command::new("cmd")
+            .args(["/c", "start", &url])
+            .output()
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Open a project in VS Code
+async fn cmd_code(registry: &Registry, project: &str) -> Result<()> {
+    let entry = registry
+        .get(project)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", project))?;
+
+    println!(
+        "{} Opening {} in VS Code...",
+        "→".blue(),
+        project.cyan()
+    );
+
+    tokio::process::Command::new("code")
+        .arg(&entry.path)
+        .output()
+        .await?;
+
+    Ok(())
+}
+
+/// Print a project's path (for shell cd integration)
+async fn cmd_path(registry: &Registry, project: &str) -> Result<()> {
+    let entry = registry
+        .get(project)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", project))?;
+
+    // Just print the path - no formatting, so it can be used with: cd $(devhub path myproject)
+    println!("{}", entry.path.display());
+
+    Ok(())
 }
 
 /// Resolve project name to registry entry

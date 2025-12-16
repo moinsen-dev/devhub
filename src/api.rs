@@ -7,6 +7,8 @@
 //!   POST /api/projects/:name/stop    - Stop a project
 //!   POST /api/projects/:name/restart - Restart a project
 //!   GET  /api/projects/:name/logs    - Get logs
+//!   POST /api/projects/:name/open-terminal - Open project in Terminal
+//!   POST /api/projects/:name/open-vscode   - Open project in VS Code
 
 use axum::{
     extract::{Path, Query, State},
@@ -86,6 +88,8 @@ pub fn create_router(registry: Registry) -> Router {
             "/api/projects/:name/services/:service/stop",
             post(stop_service),
         )
+        .route("/api/projects/:name/open-terminal", post(open_terminal))
+        .route("/api/projects/:name/open-vscode", post(open_vscode))
         .layer(cors)
         .with_state(state)
 }
@@ -402,5 +406,103 @@ fn get_service_url(project_name: &str, service: &Service) -> String {
         format!("http://{}.{}.localhost", subdomain, project_name)
     } else {
         format!("http://{}.{}.localhost", service.name, project_name)
+    }
+}
+
+/// Response for open actions
+#[derive(Debug, Serialize)]
+pub struct OpenResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+/// Open project in Terminal.app (macOS)
+async fn open_terminal(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> Result<Json<OpenResponse>, (StatusCode, String)> {
+    let registry = state.registry.read().await;
+    let entry = registry.get(&name).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("Project '{}' not found", name),
+        )
+    })?;
+
+    let path = entry.path.display().to_string();
+
+    // Use AppleScript to open Terminal and cd to the project directory
+    let script = format!(
+        r#"tell application "Terminal"
+            activate
+            do script "cd '{}' && clear"
+        end tell"#,
+        path
+    );
+
+    let output = std::process::Command::new("osascript")
+        .args(["-e", &script])
+        .output()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if output.status.success() {
+        Ok(Json(OpenResponse {
+            success: true,
+            message: format!("Opened Terminal at {}", path),
+        }))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to open Terminal: {}", stderr),
+        ))
+    }
+}
+
+/// Open project in VS Code
+async fn open_vscode(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> Result<Json<OpenResponse>, (StatusCode, String)> {
+    let registry = state.registry.read().await;
+    let entry = registry.get(&name).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("Project '{}' not found", name),
+        )
+    })?;
+
+    let path = entry.path.display().to_string();
+
+    // Try 'code' command first (VS Code CLI)
+    let output = std::process::Command::new("code")
+        .arg(&path)
+        .output()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if output.status.success() {
+        Ok(Json(OpenResponse {
+            success: true,
+            message: format!("Opened VS Code at {}", path),
+        }))
+    } else {
+        // Fallback: Try opening via 'open' command on macOS
+        let fallback = std::process::Command::new("open")
+            .args(["-a", "Visual Studio Code", &path])
+            .output()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        if fallback.status.success() {
+            Ok(Json(OpenResponse {
+                success: true,
+                message: format!("Opened VS Code at {}", path),
+            }))
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to open VS Code: {}", stderr),
+            ))
+        }
     }
 }

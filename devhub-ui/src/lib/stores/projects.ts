@@ -65,3 +65,19 @@ export async function restartProject(name: string) {
 		error.set(e instanceof Error ? e.message : 'Failed to restart project');
 	}
 }
+
+export async function openTerminal(name: string) {
+	try {
+		await api.openTerminal(name);
+	} catch (e) {
+		error.set(e instanceof Error ? e.message : 'Failed to open terminal');
+	}
+}
+
+export async function openVSCode(name: string) {
+	try {
+		await api.openVSCode(name);
+	} catch (e) {
+		error.set(e instanceof Error ? e.message : 'Failed to open VS Code');
+	}
+}

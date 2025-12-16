@@ -84,6 +84,16 @@ export const api = {
 			body: JSON.stringify({ path }),
 		});
 	},
+
+	// Open project in Terminal
+	async openTerminal(name: string): Promise<void> {
+		await fetchApi(`/projects/${name}/open-terminal`, { method: 'POST' });
+	},
+
+	// Open project in VS Code
+	async openVSCode(name: string): Promise<void> {
+		await fetchApi(`/projects/${name}/open-vscode`, { method: 'POST' });
+	},
 };
 
 // WebSocket for real-time updates

@@ -114,9 +114,16 @@ pub async fn start_service(
     // Parse command - handle shell commands properly
     let (program, args) = if service.command.contains("&&") || service.command.contains("|") {
         // Complex command, use shell
-        ("sh".to_string(), vec!["-c".to_string(), service.command.clone()])
+        (
+            "sh".to_string(),
+            vec!["-c".to_string(), service.command.clone()],
+        )
     } else {
-        let parts: Vec<String> = service.command.split_whitespace().map(String::from).collect();
+        let parts: Vec<String> = service
+            .command
+            .split_whitespace()
+            .map(String::from)
+            .collect();
         if parts.is_empty() {
             anyhow::bail!("Empty command for service {}", service.name);
         }
@@ -137,11 +144,7 @@ pub async fn start_service(
 
     // Store PID for later
     let pid = child.id();
-    tracing::info!(
-        "Started service {} with PID {:?}",
-        service.name,
-        pid
-    );
+    tracing::info!("Started service {} with PID {:?}", service.name, pid);
 
     // Write PID file
     let pid_path = log_dir.join(format!("{}.pid", service.name));
@@ -227,10 +230,7 @@ async fn start_docker_compose_service(
 
     let compose_path = project_path.join(&compose_file);
     if !compose_path.exists() {
-        anyhow::bail!(
-            "Docker Compose file not found: {}",
-            compose_path.display()
-        );
+        anyhow::bail!("Docker Compose file not found: {}", compose_path.display());
     }
 
     println!(
@@ -248,11 +248,7 @@ async fn start_docker_compose_service(
 
     let running_containers = String::from_utf8_lossy(&check_output.stdout);
     if !running_containers.trim().is_empty() {
-        println!(
-            "  {} {} already running",
-            "•".yellow(),
-            service.name
-        );
+        println!("  {} {} already running", "•".yellow(), service.name);
         return Ok(());
     }
 
@@ -292,11 +288,7 @@ async fn start_docker_compose_service(
                 service.port
             );
         } else {
-            println!(
-                "  {} {} started",
-                "✓".green(),
-                service.name
-            );
+            println!("  {} {} started", "✓".green(), service.name);
         }
     } else {
         let stderr = fs::read_to_string(&stderr_path).unwrap_or_default();
@@ -379,7 +371,8 @@ fn check_for_startup_error(stderr_path: &Path) -> Option<String> {
 
     for line in last_lines {
         let lower = line.to_lowercase();
-        if lower.contains("error") && !lower.contains("error[e") { // Skip Rust compilation progress
+        if lower.contains("error") && !lower.contains("error[e") {
+            // Skip Rust compilation progress
             return Some(line.clone());
         }
         if lower.contains("fatal") || lower.contains("panic") {
@@ -413,11 +406,7 @@ pub async fn stop_service(project_name: &str, service: &Service) -> Result<()> {
     }
 
     if !is_port_in_use(service.port) {
-        println!(
-            "  {} {} not running",
-            "•".dimmed(),
-            service.name
-        );
+        println!("  {} {} not running", "•".dimmed(), service.name);
         return Ok(());
     }
 
@@ -453,10 +442,7 @@ pub async fn stop_service(project_name: &str, service: &Service) -> Result<()> {
 
         #[cfg(not(unix))]
         {
-            let _ = Command::new("kill")
-                .args([&pid.to_string()])
-                .output()
-                .await;
+            let _ = Command::new("kill").args([&pid.to_string()]).output().await;
         }
     }
 
@@ -470,11 +456,7 @@ pub async fn stop_service(project_name: &str, service: &Service) -> Result<()> {
     }
 
     if !is_port_in_use(service.port) {
-        println!(
-            "  {} {} stopped",
-            "✓".green(),
-            service.name
-        );
+        println!("  {} {} stopped", "✓".green(), service.name);
     } else {
         println!(
             "  {} {} may still be running (port {} still in use)",
@@ -502,11 +484,7 @@ async fn stop_docker_compose_service(_project_name: &str, service: &Service) -> 
         .await?;
 
     if output.status.success() {
-        println!(
-            "  {} {} stopped",
-            "✓".green(),
-            service.name
-        );
+        println!("  {} {} stopped", "✓".green(), service.name);
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         println!(
@@ -530,20 +508,13 @@ async fn start_pm2_service(
     let pm2_name = format!("{}:{}", project_name, service.name);
 
     // Check if already running in PM2
-    let list_output = Command::new("pm2")
-        .args(["jlist"])
-        .output()
-        .await?;
+    let list_output = Command::new("pm2").args(["jlist"]).output().await?;
 
     let list_json = String::from_utf8_lossy(&list_output.stdout);
     if list_json.contains(&format!("\"name\":\"{}\"", pm2_name)) {
         // Check if it's actually running
         if list_json.contains(&format!("\"name\":\"{}\",\"pm2_env\":{{", pm2_name)) {
-            println!(
-                "  {} {} already managed by PM2",
-                "•".yellow(),
-                service.name
-            );
+            println!("  {} {} already managed by PM2", "•".yellow(), service.name);
 
             // Check if port is in use
             if is_port_in_use(service.port) {
@@ -662,11 +633,7 @@ async fn stop_pm2_service(project_name: &str, service: &Service) -> Result<()> {
         .await?;
 
     if output.status.success() {
-        println!(
-            "  {} {} stopped (PM2)",
-            "✓".green(),
-            service.name
-        );
+        println!("  {} {} stopped (PM2)", "✓".green(), service.name);
     } else {
         // May not have been PM2 managed, try regular stop
         return Ok(());
@@ -709,7 +676,12 @@ pub async fn wait_for_healthy(service: &Service, timeout_secs: u64) -> Result<bo
 }
 
 /// Read recent log lines for a service
-pub fn read_service_logs(project_name: &str, service_name: &str, lines: usize, stderr: bool) -> Result<Vec<String>> {
+pub fn read_service_logs(
+    project_name: &str,
+    service_name: &str,
+    lines: usize,
+    stderr: bool,
+) -> Result<Vec<String>> {
     let log_dir = get_log_dir(project_name)?;
     let log_file = if stderr {
         log_dir.join(format!("{}.err.log", service_name))

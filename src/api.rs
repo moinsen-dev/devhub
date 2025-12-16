@@ -22,10 +22,10 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
+use crate::caddy;
 use crate::manifest::{Manifest, Service};
 use crate::process;
 use crate::registry::Registry;
-use crate::caddy;
 
 /// Shared application state
 pub struct AppState {
@@ -80,8 +80,14 @@ pub fn create_router(registry: Registry) -> Router {
         .route("/api/projects/:name/stop", post(stop_project))
         .route("/api/projects/:name/restart", post(restart_project))
         .route("/api/projects/:name/logs", get(get_logs))
-        .route("/api/projects/:name/services/:service/start", post(start_service))
-        .route("/api/projects/:name/services/:service/stop", post(stop_service))
+        .route(
+            "/api/projects/:name/services/:service/start",
+            post(start_service),
+        )
+        .route(
+            "/api/projects/:name/services/:service/stop",
+            post(stop_service),
+        )
         .layer(cors)
         .with_state(state)
 }
@@ -143,9 +149,12 @@ async fn get_project(
     Path(name): Path<String>,
 ) -> Result<Json<ProjectStatus>, (StatusCode, String)> {
     let registry = state.registry.read().await;
-    let entry = registry
-        .get(&name)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Project '{}' not found", name)))?;
+    let entry = registry.get(&name).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("Project '{}' not found", name),
+        )
+    })?;
 
     let manifest_path = entry.path.join("devhub.toml");
     let manifest = Manifest::load(&manifest_path)
@@ -191,7 +200,12 @@ async fn start_project(
     let registry = state.registry.read().await;
     let entry = registry
         .get(&name)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Project '{}' not found", name)))?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Project '{}' not found", name),
+            )
+        })?
         .clone();
     drop(registry);
 
@@ -206,7 +220,8 @@ async fn start_project(
 
     // Start services
     for svc in &manifest.services {
-        if let Err(e) = process::start_service(&name, &entry.path, svc, &manifest.environment).await {
+        if let Err(e) = process::start_service(&name, &entry.path, svc, &manifest.environment).await
+        {
             tracing::error!("Failed to start service {}: {}", svc.name, e);
         }
     }
@@ -223,7 +238,12 @@ async fn stop_project(
     let registry = state.registry.read().await;
     let entry = registry
         .get(&name)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Project '{}' not found", name)))?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Project '{}' not found", name),
+            )
+        })?
         .clone();
     drop(registry);
 
@@ -260,7 +280,12 @@ async fn start_service(
     let registry = state.registry.read().await;
     let entry = registry
         .get(&name)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Project '{}' not found", name)))?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Project '{}' not found", name),
+            )
+        })?
         .clone();
     drop(registry);
 
@@ -272,7 +297,12 @@ async fn start_service(
         .services
         .iter()
         .find(|s| s.name == service_name)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Service '{}' not found", service_name)))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Service '{}' not found", service_name),
+            )
+        })?;
 
     process::start_service(&name, &entry.path, svc, &manifest.environment)
         .await
@@ -289,7 +319,12 @@ async fn stop_service(
     let registry = state.registry.read().await;
     let entry = registry
         .get(&name)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Project '{}' not found", name)))?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Project '{}' not found", name),
+            )
+        })?
         .clone();
     drop(registry);
 
@@ -301,7 +336,12 @@ async fn stop_service(
         .services
         .iter()
         .find(|s| s.name == service_name)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Service '{}' not found", service_name)))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Service '{}' not found", service_name),
+            )
+        })?;
 
     process::stop_service(&name, svc)
         .await
@@ -319,7 +359,12 @@ async fn get_logs(
     let registry = state.registry.read().await;
     let entry = registry
         .get(&name)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Project '{}' not found", name)))?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Project '{}' not found", name),
+            )
+        })?
         .clone();
     drop(registry);
 

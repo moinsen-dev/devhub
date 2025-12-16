@@ -306,7 +306,10 @@ fn discover_flutter(
     let web_dir = path.join("web");
     if web_dir.exists() {
         services.push(DiscoveredService {
-            name: spec.name.clone().unwrap_or_else(|| "flutter_app".to_string()),
+            name: spec
+                .name
+                .clone()
+                .unwrap_or_else(|| "flutter_app".to_string()),
             service_type: ServiceType::Shell,
             command: "flutter run -d chrome --web-port 3000".to_string(),
             port: Some(3000),
@@ -330,8 +333,8 @@ fn discover_flutter(
                     let project_name = spec.name.clone().unwrap_or_else(|| "server".to_string());
 
                     // Check if it's a Serverpod project (has generated directory)
-                    let is_serverpod = path.join("lib/src/generated").exists()
-                        || path.join("generated").exists();
+                    let is_serverpod =
+                        path.join("lib/src/generated").exists() || path.join("generated").exists();
 
                     services.clear(); // Remove web service if this is a backend
                     services.push(DiscoveredService {
@@ -401,7 +404,10 @@ fn discover_python_uv(
         }
 
         if let Ok(pyproject) = toml::from_str::<PyProject>(&content) {
-            description = pyproject.project.as_ref().and_then(|p| p.description.clone());
+            description = pyproject
+                .project
+                .as_ref()
+                .and_then(|p| p.description.clone());
 
             // Check for UV scripts
             if let Some(uv) = pyproject.tool.and_then(|t| t.uv) {
@@ -606,10 +612,12 @@ pub fn to_manifest(discovered: &DiscoveredProject) -> Manifest {
     Manifest {
         project: ProjectInfo {
             name: discovered.name.clone(),
-            description: Some(discovered
-                .description
-                .clone()
-                .unwrap_or_else(|| format!("{} project", discovered.project_type))),
+            description: Some(
+                discovered
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| format!("{} project", discovered.project_type)),
+            ),
             tags: vec![discovered.project_type.to_string().to_lowercase()],
         },
         services,
@@ -625,7 +633,13 @@ mod tests {
     fn test_detect_port_from_script() {
         assert_eq!(detect_port_from_script("next dev --port 3001"), Some(3001));
         assert_eq!(detect_port_from_script("vite -p 5173"), Some(5173));
-        assert_eq!(detect_port_from_script("uvicorn app:app --host 0.0.0.0 --port 8000"), Some(8000));
-        assert_eq!(detect_port_from_script("PORT=3000 node server.js"), Some(3000));
+        assert_eq!(
+            detect_port_from_script("uvicorn app:app --host 0.0.0.0 --port 8000"),
+            Some(8000)
+        );
+        assert_eq!(
+            detect_port_from_script("PORT=3000 node server.js"),
+            Some(3000)
+        );
     }
 }

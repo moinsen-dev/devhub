@@ -212,9 +212,7 @@ async fn cmd_init(force: bool) -> Result<()> {
     let manifest_path = std::env::current_dir()?.join("devhub.toml");
 
     if manifest_path.exists() && !force {
-        anyhow::bail!(
-            "devhub.toml already exists. Use --force to overwrite."
-        );
+        anyhow::bail!("devhub.toml already exists. Use --force to overwrite.");
     }
 
     // Try to auto-discover project info
@@ -294,11 +292,7 @@ async fn cmd_unregister(registry: &mut Registry, name: &str) -> Result<()> {
         registry.save()?;
         println!("{} Unregistered project '{}'", "✓".green(), name.cyan());
     } else {
-        println!(
-            "{} Project '{}' not found",
-            "!".yellow(),
-            name
-        );
+        println!("{} Project '{}' not found", "!".yellow(), name);
     }
     Ok(())
 }
@@ -320,7 +314,11 @@ async fn cmd_list(registry: &Registry) -> Result<()> {
         println!("    Path: {}", entry.path.display().to_string().dimmed());
         println!(
             "    Registered: {}",
-            entry.registered_at.format("%Y-%m-%d %H:%M").to_string().dimmed()
+            entry
+                .registered_at
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+                .dimmed()
         );
 
         // Try to load manifest for service info
@@ -377,11 +375,19 @@ async fn cmd_status(registry: &Registry) -> Result<()> {
             service_statuses.push((service.name.clone(), service.port, is_running));
         }
 
-        let status_icon = if any_running { "●".green() } else { "○".dimmed() };
+        let status_icon = if any_running {
+            "●".green()
+        } else {
+            "○".dimmed()
+        };
         println!("  {} {}", status_icon, name.cyan().bold());
 
         for (svc_name, port, running) in service_statuses {
-            let svc_icon = if running { "●".green() } else { "○".dimmed() };
+            let svc_icon = if running {
+                "●".green()
+            } else {
+                "○".dimmed()
+            };
             let port_str = if running {
                 format!(":{}", port).green().to_string()
             } else {
@@ -404,11 +410,7 @@ async fn cmd_start(
     let manifest_path = entry.path.join("devhub.toml");
     let manifest = manifest::Manifest::load(&manifest_path)?;
 
-    println!(
-        "{} Starting {}...",
-        "→".blue(),
-        name.cyan()
-    );
+    println!("{} Starting {}...", "→".blue(), name.cyan());
 
     // Generate Caddy config
     caddy::generate_config(&name, &manifest)?;
@@ -447,11 +449,7 @@ async fn cmd_stop(
     let manifest_path = entry.path.join("devhub.toml");
     let manifest = manifest::Manifest::load(&manifest_path)?;
 
-    println!(
-        "{} Stopping {}...",
-        "→".blue(),
-        name.cyan()
-    );
+    println!("{} Stopping {}...", "→".blue(), name.cyan());
 
     let services_to_stop: Vec<_> = if let Some(ref svc_name) = service {
         manifest
@@ -539,7 +537,10 @@ async fn cmd_logs(
         }
 
         if handles.is_empty() {
-            println!("{} No log files found. Start the services first.", "!".yellow());
+            println!(
+                "{} No log files found. Start the services first.",
+                "!".yellow()
+            );
             return Ok(());
         }
 
@@ -678,15 +679,8 @@ async fn cmd_daemon(port: u16) -> Result<()> {
         .green()
     );
 
-    println!(
-        "  {} API:       http://localhost:{}",
-        "→".blue(),
-        port
-    );
-    println!(
-        "  {} Dashboard: http://devhub.localhost",
-        "→".blue(),
-    );
+    println!("  {} API:       http://localhost:{}", "→".blue(), port);
+    println!("  {} Dashboard: http://devhub.localhost", "→".blue(),);
     println!();
     println!("  Press {} to stop", "Ctrl+C".yellow());
     println!();
@@ -794,8 +788,10 @@ async fn cmd_scan(
     }
 
     // Group by type
-    let mut by_type: std::collections::HashMap<String, Vec<&(PathBuf, discovery::DiscoveredProject)>> =
-        std::collections::HashMap::new();
+    let mut by_type: std::collections::HashMap<
+        String,
+        Vec<&(PathBuf, discovery::DiscoveredProject)>,
+    > = std::collections::HashMap::new();
     for item in &discovered_projects {
         by_type
             .entry(item.1.project_type.to_string())
@@ -804,7 +800,11 @@ async fn cmd_scan(
     }
 
     for (project_type, projects) in &by_type {
-        println!("  {} {}:", project_type.yellow(), format!("({})", projects.len()).dimmed());
+        println!(
+            "  {} {}:",
+            project_type.yellow(),
+            format!("({})", projects.len()).dimmed()
+        );
         for (path, discovered) in projects {
             let services_str = if discovered.services.is_empty() {
                 "no services".dimmed().to_string()
@@ -861,11 +861,7 @@ async fn cmd_scan(
             // Register the project
             registry.register(&discovered.name, path)?;
             new_projects += 1;
-            println!(
-                "  {} Registered {}",
-                "✓".green(),
-                discovered.name.cyan()
-            );
+            println!("  {} Registered {}", "✓".green(), discovered.name.cyan());
         }
 
         registry.save()?;
@@ -877,7 +873,10 @@ async fn cmd_scan(
         );
     } else {
         println!();
-        println!("Run with {} to register these projects.", "--auto-register".cyan());
+        println!(
+            "Run with {} to register these projects.",
+            "--auto-register".cyan()
+        );
     }
 
     Ok(())
@@ -1011,11 +1010,7 @@ async fn cmd_ports(registry: &Registry, check_conflicts: bool) -> Result<()> {
         if conflicts.is_empty() {
             println!("{} No port conflicts detected", "✓".green());
         } else {
-            println!(
-                "{} {} port conflicts detected:",
-                "!".red(),
-                conflicts.len()
-            );
+            println!("{} {} port conflicts detected:", "!".red(), conflicts.len());
             for (port, services) in conflicts {
                 println!(
                     "    Port {}: {}",
@@ -1035,7 +1030,11 @@ async fn cmd_ports(registry: &Registry, check_conflicts: bool) -> Result<()> {
 
 fn print_port_line(port: u16, services: &Vec<(String, String)>, check_conflicts: bool) {
     let in_use = process::is_port_in_use(port);
-    let status_icon = if in_use { "●".green() } else { "○".dimmed() };
+    let status_icon = if in_use {
+        "●".green()
+    } else {
+        "○".dimmed()
+    };
     let conflict = services.len() > 1;
     let conflict_icon = if conflict && check_conflicts {
         " ⚠".red().to_string()
@@ -1111,11 +1110,7 @@ async fn cmd_open(registry: &Registry, project: &str, service: Option<String>) -
         return Ok(());
     }
 
-    println!(
-        "{} Opening {} in browser...",
-        "→".blue(),
-        url.cyan()
-    );
+    println!("{} Opening {} in browser...", "→".blue(), url.cyan());
 
     // Open in default browser
     #[cfg(target_os = "macos")]
@@ -1151,11 +1146,7 @@ async fn cmd_code(registry: &Registry, project: &str) -> Result<()> {
         .get(project)
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", project))?;
 
-    println!(
-        "{} Opening {} in VS Code...",
-        "→".blue(),
-        project.cyan()
-    );
+    println!("{} Opening {} in VS Code...", "→".blue(), project.cyan());
 
     tokio::process::Command::new("code")
         .arg(&entry.path)

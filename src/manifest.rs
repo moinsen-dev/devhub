@@ -102,20 +102,18 @@ impl Manifest {
                 description: Some("My awesome project".to_string()),
                 tags: vec![],
             },
-            services: vec![
-                Service {
-                    name: "web".to_string(),
-                    service_type: ServiceType::Node,
-                    command: "npm run dev".to_string(),
-                    port: 3000,
-                    cwd: None,
-                    health_check: Some("/".to_string()),
-                    subdomain: None,
-                    main: true,
-                    depends_on: vec![],
-                    env: HashMap::new(),
-                },
-            ],
+            services: vec![Service {
+                name: "web".to_string(),
+                service_type: ServiceType::Node,
+                command: "npm run dev".to_string(),
+                port: 3000,
+                cwd: None,
+                health_check: Some("/".to_string()),
+                subdomain: None,
+                main: true,
+                depends_on: vec![],
+                env: HashMap::new(),
+            }],
             environment: HashMap::new(),
         }
     }
@@ -129,9 +127,10 @@ impl Manifest {
             let before_len = remaining.len();
 
             remaining.retain(|svc| {
-                let deps_satisfied = svc.depends_on.iter().all(|dep| {
-                    result.iter().any(|s: &&Service| s.name == *dep)
-                });
+                let deps_satisfied = svc
+                    .depends_on
+                    .iter()
+                    .all(|dep| result.iter().any(|s: &&Service| s.name == *dep));
 
                 if deps_satisfied {
                     result.push(*svc);

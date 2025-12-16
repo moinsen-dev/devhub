@@ -1,10 +1,14 @@
 <script lang="ts">
 	import type { ProjectStatus } from '$lib/types';
-	import { startProject, stopProject, restartProject, openTerminal, openVSCode } from '$lib/stores/projects';
+	import { startProject, stopProject, restartProject, openTerminal, openVSCode, startService, stopService } from '$lib/stores/projects';
+	import LogViewer from './LogViewer.svelte';
 
 	export let project: ProjectStatus;
 
 	let loading = false;
+	let showLogs = false;
+	let logService: string | undefined = undefined;
+	let serviceLoading: { [key: string]: boolean } = {};
 
 	async function handleStart() {
 		loading = true;
@@ -41,6 +45,28 @@
 			return `http://${projectName}.localhost`;
 		}
 		return `http://${service.name}.${projectName}.localhost`;
+	}
+
+	async function handleStartService(serviceName: string) {
+		serviceLoading[serviceName] = true;
+		await startService(project.name, serviceName);
+		serviceLoading[serviceName] = false;
+	}
+
+	async function handleStopService(serviceName: string) {
+		serviceLoading[serviceName] = true;
+		await stopService(project.name, serviceName);
+		serviceLoading[serviceName] = false;
+	}
+
+	function openServiceLogs(serviceName?: string) {
+		logService = serviceName;
+		showLogs = true;
+	}
+
+	function closeLogs() {
+		showLogs = false;
+		logService = undefined;
 	}
 </script>
 
@@ -95,7 +121,7 @@
 		{#each project.services as service}
 			{@const url = getServiceUrl(service)}
 			<div
-				class="flex items-center justify-between py-2 px-3 rounded-lg bg-gray-900/50"
+				class="flex items-center justify-between py-2 px-3 rounded-lg bg-gray-900/50 group"
 			>
 				<div class="flex items-center gap-2">
 					<span
@@ -107,16 +133,54 @@
 					<span class="text-xs text-gray-500">:{service.port}</span>
 				</div>
 
-				{#if service.running && url}
-					<a
-						href={url}
-						target="_blank"
-						rel="noopener noreferrer"
-						class="text-xs text-primary-400 hover:text-primary-300 hover:underline"
-					>
-						{url} →
-					</a>
-				{/if}
+				<div class="flex items-center gap-2">
+					{#if service.running && url}
+						<a
+							href={url}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="text-xs text-primary-400 hover:text-primary-300 hover:underline"
+						>
+							{url} →
+						</a>
+					{/if}
+
+					<!-- Service-level controls (visible on hover) -->
+					<div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+						<button
+							class="p-1 rounded hover:bg-gray-700 text-gray-500 hover:text-white transition-colors"
+							on:click={() => openServiceLogs(service.name)}
+							title="View logs"
+						>
+							<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+							</svg>
+						</button>
+						{#if service.running}
+							<button
+								class="p-1 rounded hover:bg-red-900/50 text-gray-500 hover:text-red-400 transition-colors"
+								on:click={() => handleStopService(service.name)}
+								disabled={serviceLoading[service.name]}
+								title="Stop service"
+							>
+								<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+									<rect x="6" y="6" width="12" height="12" rx="1" />
+								</svg>
+							</button>
+						{:else}
+							<button
+								class="p-1 rounded hover:bg-green-900/50 text-gray-500 hover:text-green-400 transition-colors"
+								on:click={() => handleStartService(service.name)}
+								disabled={serviceLoading[service.name]}
+								title="Start service"
+							>
+								<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+									<path d="M8 5v14l11-7z" />
+								</svg>
+							</button>
+						{/if}
+					</div>
+				</div>
 			</div>
 		{/each}
 	</div>
@@ -124,9 +188,18 @@
 	<!-- Footer: Path and Quick Actions -->
 	<div class="mt-4 pt-3 border-t border-gray-700/50 flex items-center justify-between">
 		<p class="text-xs text-gray-500 truncate flex-1" title={project.path}>
-			📁 {project.path}
+			{project.path}
 		</p>
 		<div class="flex gap-1 ml-2">
+			<button
+				class="p-1.5 rounded hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
+				on:click={() => openServiceLogs()}
+				title="View all logs"
+			>
+				<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+				</svg>
+			</button>
 			<button
 				class="p-1.5 rounded hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
 				on:click={handleOpenTerminal}
@@ -149,3 +222,8 @@
 		</div>
 	</div>
 </div>
+
+<!-- Log Viewer Modal -->
+{#if showLogs}
+	<LogViewer project={project.name} service={logService} onClose={closeLogs} />
+{/if}

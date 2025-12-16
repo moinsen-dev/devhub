@@ -37,9 +37,12 @@ devhub status             # See everything at a glance
 
 - **One command to rule them all** - `devhub start` launches your entire stack
 - **Bulk discovery** - Scan directories and register 100+ projects at once
-- **Web dashboard** - Visual status, start/stop buttons, real-time updates
+- **Web dashboard** - Visual status, start/stop buttons, log viewer, real-time updates
+- **Fuzzy search** - Find projects fast with `devhub search`
+- **Favorites & Recent** - Star projects, track recently used
+- **Batch operations** - `devhub start --all` or `--favorites`
 - **Auto-discovery** - Detects Rust, Node, Python, Go, Docker, Flutter projects
-- **Port conflict detection** - Know before you crash
+- **Port conflict detection** - Know before you crash with `devhub ports --resolve`
 - **PM2 integration** - Node.js services managed properly
 - **Docker Compose support** - First-class container orchestration
 - **Health checks** - Wait for services to be truly ready
@@ -148,10 +151,22 @@ devhub scan --depth 3          # Scan deeper into subdirectories
 
 ```bash
 devhub start [project]         # Start project services
+devhub start --all             # Start ALL registered projects
+devhub start --favorites       # Start all favorite projects
 devhub stop [project]          # Stop project services
 devhub restart [project]       # Restart project services
 devhub status                  # Show status of all projects
 devhub logs <project> [-f]     # Stream logs (with follow mode)
+```
+
+### Discovery & Search
+
+```bash
+devhub search <query>          # Fuzzy search for projects
+devhub recent                  # Show recently used projects
+devhub fav add <project>       # Add to favorites
+devhub fav list                # List favorites
+devhub fav toggle <project>    # Toggle favorite status
 ```
 
 ### Port Management
@@ -159,6 +174,7 @@ devhub logs <project> [-f]     # Stream logs (with follow mode)
 ```bash
 devhub ports                   # Show all port allocations
 devhub ports --check           # Detect port conflicts
+devhub ports --resolve         # Suggest fixes for conflicts
 ```
 
 ### Developer Shortcuts
@@ -230,9 +246,12 @@ The web dashboard provides:
 
 - Project cards with running status indicators
 - One-click start/stop/restart buttons
+- **Log viewer** with auto-refresh and syntax highlighting
+- **Service-level controls** (start/stop individual services on hover)
 - Real-time auto-refresh (5-second polling)
 - Search and filter by name or status
 - Service metrics (X/Y services running)
+- Open in Terminal / VS Code buttons
 
 **Access:**
 - `http://devhub.localhost` (with Caddy proxy)

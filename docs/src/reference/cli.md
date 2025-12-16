@@ -75,13 +75,15 @@ devhub list
 Start project services.
 
 ```bash
-devhub start [PROJECT] [--service <SERVICE>]
+devhub start [PROJECT] [--service <SERVICE>] [--all] [--favorites]
 
 Arguments:
   PROJECT  Project name (optional if in project directory)
 
 Options:
-  --service, -s  Start only this service
+  --service, -s   Start only this service
+  --all           Start all registered projects
+  --favorites     Start all favorite projects
 ```
 
 #### `devhub stop`
@@ -89,13 +91,15 @@ Options:
 Stop project services.
 
 ```bash
-devhub stop [PROJECT] [--service <SERVICE>]
+devhub stop [PROJECT] [--service <SERVICE>] [--all] [--favorites]
 
 Arguments:
   PROJECT  Project name (optional if in project directory)
 
 Options:
-  --service, -s  Stop only this service
+  --service, -s   Stop only this service
+  --all           Stop all registered projects
+  --favorites     Stop all favorite projects
 ```
 
 #### `devhub restart`
@@ -103,13 +107,15 @@ Options:
 Restart project services.
 
 ```bash
-devhub restart [PROJECT] [--service <SERVICE>]
+devhub restart [PROJECT] [--service <SERVICE>] [--all] [--favorites]
 
 Arguments:
   PROJECT  Project name (optional if in project directory)
 
 Options:
-  --service, -s  Restart only this service
+  --service, -s   Restart only this service
+  --all           Restart all registered projects
+  --favorites     Restart all favorite projects
 ```
 
 #### `devhub status`
@@ -160,10 +166,54 @@ Options:
 Show port allocations across all projects.
 
 ```bash
-devhub ports [--check]
+devhub ports [--check] [--resolve]
 
 Options:
-  --check, -c  Detect and report port conflicts
+  --check, -c    Detect and report port conflicts
+  --resolve, -r  Suggest fixes for port conflicts
+```
+
+### Discovery & Search
+
+#### `devhub search`
+
+Fuzzy search for projects by name.
+
+```bash
+devhub search <QUERY> [--limit <N>]
+
+Arguments:
+  QUERY  Search query (fuzzy matched against project names)
+
+Options:
+  --limit, -l  Maximum results to show (default: 10)
+```
+
+#### `devhub recent`
+
+Show recently used projects.
+
+```bash
+devhub recent [--limit <N>]
+
+Options:
+  --limit, -l  Maximum results to show (default: 10)
+```
+
+### Favorites
+
+#### `devhub fav`
+
+Manage favorite projects.
+
+```bash
+devhub fav <SUBCOMMAND>
+
+Subcommands:
+  add <PROJECT>     Add project to favorites
+  remove <PROJECT>  Remove project from favorites
+  list              List all favorite projects
+  toggle <PROJECT>  Toggle favorite status
 ```
 
 ### Developer Shortcuts
@@ -267,4 +317,19 @@ devhub start my-project
 
 # Generate completions
 devhub completions zsh > ~/.zfunc/_devhub
+
+# Fuzzy search for projects
+devhub search graph     # Find projects with "graph" in name
+
+# Manage favorites
+devhub fav add my-project
+devhub fav list
+devhub start --favorites  # Start all favorited projects
+
+# Batch operations
+devhub start --all       # Start everything
+devhub stop --favorites  # Stop only favorites
+
+# View recent projects
+devhub recent            # Shows last 10 used projects
 ```

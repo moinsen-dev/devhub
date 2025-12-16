@@ -81,3 +81,30 @@ export async function openVSCode(name: string) {
 		error.set(e instanceof Error ? e.message : 'Failed to open VS Code');
 	}
 }
+
+export async function startService(project: string, service: string) {
+	try {
+		await api.startService(project, service);
+		await fetchProjects();
+	} catch (e) {
+		error.set(e instanceof Error ? e.message : 'Failed to start service');
+	}
+}
+
+export async function stopService(project: string, service: string) {
+	try {
+		await api.stopService(project, service);
+		await fetchProjects();
+	} catch (e) {
+		error.set(e instanceof Error ? e.message : 'Failed to stop service');
+	}
+}
+
+export async function getLogs(project: string, service?: string, lines: number = 100): Promise<string[]> {
+	try {
+		return await api.getLogs(project, service, lines);
+	} catch (e) {
+		error.set(e instanceof Error ? e.message : 'Failed to get logs');
+		return [];
+	}
+}

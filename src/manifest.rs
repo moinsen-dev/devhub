@@ -119,6 +119,7 @@ impl Manifest {
     }
 
     /// Get services in dependency order (services with no deps first)
+    #[allow(dead_code)]
     pub fn services_in_order(&self) -> Vec<&Service> {
         let mut result = Vec::new();
         let mut remaining: Vec<&Service> = self.services.iter().collect();
@@ -143,7 +144,7 @@ impl Manifest {
             // If we didn't make progress, there's a cycle
             if remaining.len() == before_len && !remaining.is_empty() {
                 // Just add the rest in order (circular dependency)
-                result.extend(remaining.drain(..));
+                result.append(&mut remaining);
             }
         }
 

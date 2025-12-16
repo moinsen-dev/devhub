@@ -193,6 +193,7 @@ fn discover_rust(
 
                     if let Ok(content) = std::fs::read_to_string(&member_cargo) {
                         #[derive(Deserialize)]
+                        #[allow(dead_code)]
                         struct MemberCargo {
                             package: Option<CargoPackage>,
                             bin: Option<Vec<CargoBin>>,
@@ -333,7 +334,7 @@ fn discover_flutter(
                     let project_name = spec.name.clone().unwrap_or_else(|| "server".to_string());
 
                     // Check if it's a Serverpod project (has generated directory)
-                    let is_serverpod =
+                    let _is_serverpod =
                         path.join("lib/src/generated").exists() || path.join("generated").exists();
 
                     services.clear(); // Remove web service if this is a backend
@@ -341,7 +342,7 @@ fn discover_flutter(
                         name: project_name,
                         service_type: ServiceType::Shell,
                         command: format!("dart run bin/{}.dart", dart_name),
-                        port: Some(if is_serverpod { 8080 } else { 8080 }),
+                        port: Some(8080),
                         cwd: None,
                     });
                     found_server = true;
@@ -387,6 +388,7 @@ fn discover_python_uv(
         }
 
         #[derive(Deserialize)]
+        #[allow(dead_code)]
         struct PyProjectInfo {
             name: Option<String>,
             description: Option<String>,
@@ -577,7 +579,7 @@ fn detect_port_from_script(script: &str) -> Option<u16> {
             if let Some(caps) = re.captures(script) {
                 if let Some(port_str) = caps.get(1) {
                     if let Ok(port) = port_str.as_str().parse::<u16>() {
-                        if port >= 1024 && port <= 65535 {
+                        if port >= 1024 {
                             return Some(port);
                         }
                     }

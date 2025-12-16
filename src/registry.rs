@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Global project registry stored at ~/.devhub/registry.json
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -48,11 +48,11 @@ impl Registry {
     }
 
     /// Register a project
-    pub fn register(&mut self, name: &str, path: &PathBuf) -> Result<()> {
+    pub fn register(&mut self, name: &str, path: &Path) -> Result<()> {
         self.projects.insert(
             name.to_string(),
             ProjectEntry {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 registered_at: Utc::now(),
             },
         );

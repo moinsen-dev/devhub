@@ -53,6 +53,7 @@ pub fn generate_config(project_name: &str, manifest: &Manifest) -> Result<()> {
 }
 
 /// Remove Caddy configuration for a project
+#[allow(dead_code)]
 pub fn remove_config(project_name: &str) -> Result<()> {
     let config = Config::load()?;
     let config_path = config
@@ -104,6 +105,7 @@ pub fn reload() -> Result<()> {
 }
 
 /// Check if Caddy proxy is running
+#[allow(dead_code)]
 pub fn is_caddy_running() -> bool {
     let output = Command::new("docker")
         .args([

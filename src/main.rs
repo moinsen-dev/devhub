@@ -627,7 +627,7 @@ async fn cmd_discover(path: PathBuf) -> Result<()> {
             "  {} {} ({})",
             "•".dimmed(),
             svc.name.yellow(),
-            svc.service_type.to_string()
+            svc.service_type
         );
         println!("    Command: {}", svc.command.dimmed());
         if let Some(port) = svc.port {
@@ -805,7 +805,7 @@ async fn cmd_scan(
             project_type.yellow(),
             format!("({})", projects.len()).dimmed()
         );
-        for (path, discovered) in projects {
+        for (_path, discovered) in projects {
             let services_str = if discovered.services.is_empty() {
                 "no services".dimmed().to_string()
             } else {
@@ -999,7 +999,7 @@ async fn cmd_ports(registry: &Registry, check_conflicts: bool) -> Result<()> {
     println!("  {} (other)", "Other".cyan());
     for (port, services) in ports
         .iter()
-        .filter(|(p, _)| !(**p >= 3000 && **p < 3100) && !(**p >= 8000 && **p < 8100))
+        .filter(|(p, _)| !(**p >= 3000 && **p < 3100 || **p >= 8000 && **p < 8100))
     {
         print_port_line(**port, services, check_conflicts);
     }
@@ -1028,7 +1028,7 @@ async fn cmd_ports(registry: &Registry, check_conflicts: bool) -> Result<()> {
     Ok(())
 }
 
-fn print_port_line(port: u16, services: &Vec<(String, String)>, check_conflicts: bool) {
+fn print_port_line(port: u16, services: &[(String, String)], check_conflicts: bool) {
     let in_use = process::is_port_in_use(port);
     let status_icon = if in_use {
         "●".green()

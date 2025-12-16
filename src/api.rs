@@ -16,8 +16,6 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
@@ -267,7 +265,7 @@ async fn restart_project(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
 ) -> Result<Json<ProjectStatus>, (StatusCode, String)> {
-    stop_project(State(state.clone()), Path(name.clone())).await?;
+    let _ = stop_project(State(state.clone()), Path(name.clone())).await?;
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     start_project(State(state), Path(name)).await
 }

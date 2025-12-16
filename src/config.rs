@@ -68,6 +68,7 @@ impl Config {
     }
 
     /// Save config to disk
+    #[allow(dead_code)]
     pub fn save(&self) -> Result<()> {
         let config_path = get_config_path()?;
 

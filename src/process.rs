@@ -327,7 +327,7 @@ async fn check_health_endpoint(port: u16, path: &str, timeout_secs: u64) -> bool
 }
 
 /// Wait for port with progress dots
-async fn wait_for_port_with_progress(port: u16, service_name: &str, timeout_secs: u64) -> bool {
+async fn wait_for_port_with_progress(port: u16, _service_name: &str, timeout_secs: u64) -> bool {
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(timeout_secs);
     let mut dots = 0;
@@ -366,7 +366,7 @@ fn check_for_startup_error(stderr_path: &Path) -> Option<String> {
     let reader = BufReader::new(file);
 
     // Look for common error patterns in the last few lines
-    let lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+    let lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
     let last_lines: Vec<&String> = lines.iter().rev().take(10).collect();
 
     for line in last_lines {
@@ -379,7 +379,7 @@ fn check_for_startup_error(stderr_path: &Path) -> Option<String> {
             return Some(line.clone());
         }
         if lower.contains("eaddrinuse") || lower.contains("address already in use") {
-            return Some(format!("Port already in use"));
+            return Some("Port already in use".to_string());
         }
         if lower.contains("enoent") || lower.contains("not found") {
             return Some(line.clone());
@@ -643,6 +643,7 @@ async fn stop_pm2_service(project_name: &str, service: &Service) -> Result<()> {
 }
 
 /// Wait for a service to be healthy
+#[allow(dead_code)]
 pub async fn wait_for_healthy(service: &Service, timeout_secs: u64) -> Result<bool> {
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(timeout_secs);
@@ -695,7 +696,7 @@ pub fn read_service_logs(
 
     let file = File::open(log_file)?;
     let reader = BufReader::new(file);
-    let all_lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+    let all_lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
 
     // Return last N lines
     let start = if all_lines.len() > lines {

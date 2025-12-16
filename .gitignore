@@ -1,0 +1,55 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+*.log
+logs/
+
+# Plan files (local development notes)
+plan.md
+
+# Local configuration
+.env
+.env.local
+.env.*.local
+
+# SvelteKit (devhub-ui/)
+devhub-ui/node_modules/
+devhub-ui/.svelte-kit/
+devhub-ui/build/
+devhub-ui/.env
+devhub-ui/.env.*
+!devhub-ui/.env.example
+
+# Svelte build output
+devhub-ui/dist/
+
+# npm/pnpm/yarn
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# Testing
+coverage/
+*.lcov
+
+# Temporary files
+*.tmp
+*.temp
+.cache/

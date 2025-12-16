@@ -1,0 +1,66 @@
+# DevHub - Docker Compose
+#
+# Usage:
+#   docker compose up -d          # Start DevHub
+#   docker compose logs -f        # View logs
+#   docker compose down           # Stop DevHub
+#
+# Access:
+#   Dashboard: http://devhub.localhost (via Caddy proxy)
+#   API: http://api.devhub.localhost or http://localhost:9876
+
+services:
+  devhub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: devhub
+    restart: unless-stopped
+    ports:
+      - "9876:9876"
+    volumes:
+      # Persist registry and logs
+      - devhub-data:/data
+      # Mount host Docker socket for Docker Compose management
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Mount projects directory (read-only for security)
+      - ~/work:/projects:ro
+    environment:
+      - DEVHUB_DATA_DIR=/data
+      - DEVHUB_PROJECTS_ROOT=/projects
+      - RUST_LOG=info
+    networks:
+      - devhub-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9876/api/projects"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # Optional: Run UI in dev mode (for development)
+  # Uncomment to use SvelteKit dev server instead of built static files
+  # devhub-ui:
+  #   image: node:22-slim
+  #   container_name: devhub-ui
+  #   working_dir: /app
+  #   command: sh -c "npm install && npm run dev -- --host"
+  #   ports:
+  #     - "5173:5173"
+  #   volumes:
+  #     - ./devhub-ui:/app
+  #   environment:
+  #     - VITE_API_URL=http://devhub:9876
+  #   networks:
+  #     - devhub-net
+  #   depends_on:
+  #     - devhub
+
+volumes:
+  devhub-data:
+    name: devhub-data
+
+networks:
+  devhub-net:
+    name: devhub-net
+    driver: bridge

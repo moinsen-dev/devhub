@@ -1,0 +1,26 @@
+# DevHub - Managing itself (dogfooding!)
+[project]
+name = "devhub"
+description = "Multi-project development environment manager"
+tags = ["rust", "svelte", "developer-tools"]
+
+[[services]]
+name = "daemon"
+type = "rust-binary"
+command = "cargo run --release -- daemon"
+port = 9876
+health_check = "/api/projects"
+subdomain = "api"
+
+[[services]]
+name = "dashboard"
+type = "node"
+command = "npm run dev"
+cwd = "devhub-ui"
+port = 5173
+health_check = "/"
+main = true
+depends_on = ["daemon"]
+
+[environment]
+RUST_LOG = "info"

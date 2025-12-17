@@ -9,6 +9,9 @@ mod api;
 mod caddy;
 mod config;
 mod discovery;
+mod docker;
+mod dockerfile;
+mod infra;
 mod manifest;
 mod ports;
 mod process;
@@ -466,6 +469,92 @@ enum Commands {
         #[arg(short, long, default_value = "10")]
         limit: usize,
     },
+
+    // === Container Mode Commands ===
+
+    /// Manage shared infrastructure (PostgreSQL, Redis, MinIO)
+    Infra {
+        #[command(subcommand)]
+        action: InfraAction,
+    },
+
+    /// Convert a project to container mode
+    Containerize {
+        /// Project name (or current directory if not specified)
+        project: Option<String>,
+
+        /// Force overwrite existing container configuration
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// Switch a project to native mode
+    Native {
+        /// Project name (or current directory if not specified)
+        project: Option<String>,
+    },
+
+    /// Manage Docker networks for container isolation
+    Network {
+        #[command(subcommand)]
+        action: NetworkAction,
+    },
+}
+
+/// Infrastructure management subcommands
+#[derive(Subcommand)]
+enum InfraAction {
+    /// Start shared infrastructure services
+    Start {
+        /// Specific services to start (default: all enabled)
+        #[arg(num_args = 0..)]
+        services: Vec<String>,
+    },
+    /// Stop shared infrastructure services
+    Stop {
+        /// Specific services to stop (default: all)
+        #[arg(num_args = 0..)]
+        services: Vec<String>,
+    },
+    /// Restart shared infrastructure services
+    Restart {
+        /// Specific services to restart (default: all)
+        #[arg(num_args = 0..)]
+        services: Vec<String>,
+    },
+    /// Show infrastructure status
+    Status,
+    /// View infrastructure logs
+    Logs {
+        /// Service name (optional)
+        service: Option<String>,
+        /// Follow log output
+        #[arg(short, long)]
+        follow: bool,
+        /// Number of lines to show
+        #[arg(short = 'n', long, default_value = "100")]
+        lines: usize,
+    },
+    /// Initialize infrastructure configuration
+    Init {
+        /// Force overwrite existing configuration
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
+/// Network management subcommands
+#[derive(Subcommand)]
+enum NetworkAction {
+    /// Show all DevHub Docker networks
+    Status,
+    /// Inspect a project's network topology
+    Inspect {
+        /// Project name
+        project: String,
+    },
+    /// Clean up orphaned networks
+    Prune,
 }
 
 #[derive(Subcommand)]
@@ -566,6 +655,14 @@ async fn main() -> Result<()> {
         Commands::Search { query, limit } => cmd_search(&registry, &query, limit).await,
         Commands::Fav { action } => cmd_fav(&mut registry, action).await,
         Commands::Recent { limit } => cmd_recent(&registry, limit).await,
+
+        // Container mode commands
+        Commands::Infra { action } => cmd_infra(action).await,
+        Commands::Containerize { project, force } => {
+            cmd_containerize(&registry, project, force).await
+        }
+        Commands::Native { project } => cmd_native(&registry, project).await,
+        Commands::Network { action } => cmd_network(action).await,
     }
 }
 
@@ -1371,10 +1468,15 @@ async fn cmd_daemon_start() -> Result<()> {
     let status = check_daemon().await;
     if matches!(status, DaemonStatus::Running) {
         println!("{} Daemon is already running", "✓".green());
+        // Ensure reverse proxy is running even if daemon was already up
+        ensure_reverse_proxy();
         return Ok(());
     }
 
     println!("{} Starting daemon...", "→".blue());
+
+    // Ensure reverse proxy is running for *.localhost routing
+    ensure_reverse_proxy();
 
     // Try brew services first
     let brew_result = std::process::Command::new("brew")
@@ -1621,6 +1723,81 @@ async fn cmd_daemon_status() -> Result<()> {
     Ok(())
 }
 
+/// Ensure the Caddy reverse proxy is running
+fn ensure_reverse_proxy() {
+    let config = config::Config::load().unwrap_or_default();
+
+    // Get the reverse-proxy directory (parent of sites.d)
+    let proxy_dir = config
+        .caddy_sites_dir
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| {
+            let home = directories::BaseDirs::new()
+                .map(|d| d.home_dir().to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("~"));
+            home.join("docker/reverse-proxy")
+        });
+
+    let compose_file = proxy_dir.join("docker-compose.yml");
+
+    if !compose_file.exists() {
+        tracing::debug!(
+            "Reverse proxy compose file not found at {:?}, skipping",
+            compose_file
+        );
+        return;
+    }
+
+    // Check if caddy-proxy container is running
+    let check_output = std::process::Command::new("docker")
+        .args(["ps", "-q", "-f", "name=caddy-proxy"])
+        .output();
+
+    let is_running = check_output
+        .map(|o| !o.stdout.is_empty())
+        .unwrap_or(false);
+
+    if is_running {
+        tracing::debug!("Reverse proxy is already running");
+        return;
+    }
+
+    // Start the reverse proxy
+    println!(
+        "  {} Starting reverse proxy...",
+        "→".blue()
+    );
+
+    let result = std::process::Command::new("docker")
+        .args(["compose", "-f", compose_file.to_str().unwrap_or_default(), "up", "-d"])
+        .output();
+
+    match result {
+        Ok(output) if output.status.success() => {
+            println!(
+                "  {} Reverse proxy started",
+                "✓".green()
+            );
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!(
+                "  {} Failed to start reverse proxy: {}",
+                "✗".red(),
+                stderr.trim()
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "  {} Failed to start reverse proxy: {}",
+                "✗".red(),
+                e
+            );
+        }
+    }
+}
+
 /// Run the daemon in foreground
 async fn cmd_daemon_run(port: u16) -> Result<()> {
     let registry = Registry::load()?;
@@ -1636,6 +1813,9 @@ async fn cmd_daemon_run(port: u16) -> Result<()> {
 "#
         .green()
     );
+
+    // Ensure reverse proxy is running for *.localhost routing
+    ensure_reverse_proxy();
 
     println!("  {} API:       http://localhost:{}", "→".blue(), port);
     println!("  {} Dashboard: http://devhub.localhost", "→".blue(),);
@@ -2363,5 +2543,277 @@ fn format_time_ago(dt: chrono::DateTime<chrono::Utc>) -> String {
         format!("{}m ago", duration.num_minutes())
     } else {
         "just now".to_string()
+    }
+}
+
+// ============================================================================
+// Container Mode Commands
+// ============================================================================
+
+/// Handle infrastructure subcommands
+async fn cmd_infra(action: InfraAction) -> Result<()> {
+    let config = config::Config::load()?;
+
+    match action {
+        InfraAction::Init { force } => {
+            infra::init_infrastructure(&config, force)?;
+            Ok(())
+        }
+        InfraAction::Start { services } => {
+            let services = if services.is_empty() {
+                None
+            } else {
+                Some(services)
+            };
+            infra::start(&config, services).await
+        }
+        InfraAction::Stop { services } => {
+            let services = if services.is_empty() {
+                None
+            } else {
+                Some(services)
+            };
+            infra::stop(&config, services).await
+        }
+        InfraAction::Restart { services } => {
+            let services = if services.is_empty() {
+                None
+            } else {
+                Some(services)
+            };
+            infra::restart(&config, services).await
+        }
+        InfraAction::Status => {
+            let status = infra::get_status(&config).await?;
+            infra::print_status(&status);
+            Ok(())
+        }
+        InfraAction::Logs {
+            service,
+            follow,
+            lines,
+        } => infra::logs(&config, service.as_deref(), follow, lines),
+    }
+}
+
+/// Convert a project to container mode
+async fn cmd_containerize(
+    registry: &Registry,
+    project: Option<String>,
+    force: bool,
+) -> Result<()> {
+    let (project_name, entry) = resolve_project(registry, project)?;
+    let project_path = &entry.path;
+
+    println!(
+        "\n{} Converting {} to container mode...",
+        "⚙".blue(),
+        project_name.cyan().bold()
+    );
+
+    // Load the manifest
+    let manifest_path = project_path.join("devhub.toml");
+    if !manifest_path.exists() {
+        anyhow::bail!(
+            "No devhub.toml found at {}. Run 'devhub init' first.",
+            project_path.display()
+        );
+    }
+
+    let mut manifest = manifest::Manifest::load(&manifest_path)?;
+
+    // Check if already in container mode
+    if manifest.project.mode == manifest::ProjectMode::Container && !force {
+        println!(
+            "  {} Project is already in container mode",
+            "".yellow()
+        );
+        return Ok(());
+    }
+
+    // Update mode to container
+    manifest.project.mode = manifest::ProjectMode::Container;
+
+    // Suggest images for services without them
+    for service in &mut manifest.services {
+        if service.image.is_none() {
+            let suggested_image = docker::get_default_image(&service.service_type);
+            println!(
+                "  {} Service '{}' will use image: {}",
+                "→".dimmed(),
+                service.name.yellow(),
+                suggested_image.cyan()
+            );
+            service.image = Some(suggested_image);
+        }
+    }
+
+    // Write updated manifest
+    let content = toml::to_string_pretty(&manifest)?;
+    std::fs::write(&manifest_path, content)?;
+
+    // Generate Dockerfiles for services that don't have them
+    println!("\n  {} Generating Dockerfiles...", "→".dimmed());
+    for service in &manifest.services {
+        if !dockerfile::has_dockerfile(project_path, service) {
+            dockerfile::write_dockerfile(project_path, service, &manifest)?;
+            println!(
+                "    {} Generated Dockerfile for '{}'",
+                "✓".green(),
+                service.name
+            );
+        } else {
+            println!(
+                "    {} Service '{}' already has a Dockerfile",
+                "•".dimmed(),
+                service.name
+            );
+        }
+    }
+
+    // Regenerate Caddy config
+    caddy::generate_config(&project_name, &manifest)?;
+    caddy::reload()?;
+
+    println!(
+        "\n  {} Project converted to container mode",
+        "✓".green()
+    );
+    println!(
+        "  {} Run 'devhub start {}' to start with containers",
+        "→".dimmed(),
+        project_name
+    );
+
+    Ok(())
+}
+
+/// Switch a project to native mode
+async fn cmd_native(registry: &Registry, project: Option<String>) -> Result<()> {
+    let (project_name, entry) = resolve_project(registry, project)?;
+    let project_path = &entry.path;
+
+    println!(
+        "\n{} Switching {} to native mode...",
+        "⚙".blue(),
+        project_name.cyan().bold()
+    );
+
+    // Load the manifest
+    let manifest_path = project_path.join("devhub.toml");
+    if !manifest_path.exists() {
+        anyhow::bail!(
+            "No devhub.toml found at {}. Run 'devhub init' first.",
+            project_path.display()
+        );
+    }
+
+    let mut manifest = manifest::Manifest::load(&manifest_path)?;
+
+    // Check if already in native mode
+    if manifest.project.mode == manifest::ProjectMode::Native {
+        println!(
+            "  {} Project is already in native mode",
+            "".yellow()
+        );
+        return Ok(());
+    }
+
+    // Update mode to native
+    manifest.project.mode = manifest::ProjectMode::Native;
+
+    // Clear container-specific service modes
+    for service in &mut manifest.services {
+        service.mode = None;
+    }
+
+    // Write updated manifest
+    let content = toml::to_string_pretty(&manifest)?;
+    std::fs::write(&manifest_path, content)?;
+
+    // Regenerate Caddy config
+    caddy::generate_config(&project_name, &manifest)?;
+    caddy::reload()?;
+
+    println!(
+        "\n  {} Project switched to native mode",
+        "✓".green()
+    );
+
+    Ok(())
+}
+
+/// Handle network subcommands
+async fn cmd_network(action: NetworkAction) -> Result<()> {
+    let config = config::Config::load()?;
+
+    match action {
+        NetworkAction::Status => {
+            println!("\n{}", "DevHub Docker Networks".bold());
+            println!("{}", "─".repeat(50));
+
+            let networks = docker::list_devhub_networks(&config).await?;
+
+            if networks.is_empty() {
+                println!("  No DevHub networks found");
+            } else {
+                for network in networks {
+                    let is_shared = network == config.shared_network;
+                    let label = if is_shared { " (shared)" } else { "" };
+                    println!(
+                        "  {} {}{}",
+                        "●".green(),
+                        network.cyan(),
+                        label.dimmed()
+                    );
+                }
+            }
+
+            Ok(())
+        }
+        NetworkAction::Inspect { project } => {
+            println!(
+                "\n{} Network topology for: {}",
+                "🔍".dimmed(),
+                project.cyan().bold()
+            );
+            println!("{}", "─".repeat(50));
+
+            // List containers for this project
+            let containers = docker::list_project_containers(&project).await?;
+
+            if containers.is_empty() {
+                println!("  No containers running for project '{}'", project);
+            } else {
+                println!("  {}", "Containers:".bold());
+                for (name, running) in containers {
+                    let status = if running {
+                        "running".green()
+                    } else {
+                        "stopped".red()
+                    };
+                    println!("    {} {} ({})", "●".dimmed(), name, status);
+                }
+            }
+
+            Ok(())
+        }
+        NetworkAction::Prune => {
+            println!("\n{} Cleaning up orphaned networks...", "🧹".dimmed());
+
+            let removed = docker::cleanup_orphaned_networks(&config).await?;
+
+            if removed > 0 {
+                println!(
+                    "\n  {} Removed {} orphaned network(s)",
+                    "✓".green(),
+                    removed
+                );
+            } else {
+                println!("  {} No orphaned networks found", "".dimmed());
+            }
+
+            Ok(())
+        }
     }
 }

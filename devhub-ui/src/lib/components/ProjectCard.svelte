@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { ProjectStatus } from '$lib/types';
-	import { startProject, stopProject, restartProject, openTerminal, openVSCode, startService, stopService } from '$lib/stores/projects';
+	import { startProject, stopProject, restartProject, openTerminal, openVSCode, startService, stopService, unregisterProject } from '$lib/stores/projects';
 	import LogViewer from './LogViewer.svelte';
 
 	export let project: ProjectStatus;
@@ -9,6 +9,7 @@
 	let showLogs = false;
 	let logService: string | undefined = undefined;
 	let serviceLoading: { [key: string]: boolean } = {};
+	let showUnregisterConfirm = false;
 
 	async function handleStart() {
 		loading = true;
@@ -67,6 +68,13 @@
 	function closeLogs() {
 		showLogs = false;
 		logService = undefined;
+	}
+
+	async function handleUnregister() {
+		loading = true;
+		await unregisterProject(project.name);
+		showUnregisterConfirm = false;
+		loading = false;
 	}
 </script>
 
@@ -219,9 +227,57 @@
 					<path d="M21.536 3.412l-2.836-.993a.658.658 0 0 0-.797.285L14.12 9.357l3.783 2.9 3.633-7.925a.66.66 0 0 0-.399-.92zM21.536 20.588l-2.836.993a.658.658 0 0 1-.797-.285l-3.783-6.653 3.783-2.9 3.633 7.925a.66.66 0 0 1-.399.92z"/>
 				</svg>
 			</button>
+			<button
+				class="p-1.5 rounded hover:bg-red-900/50 text-gray-400 hover:text-red-400 transition-colors"
+				on:click={() => showUnregisterConfirm = true}
+				title="Unregister project"
+			>
+				<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+				</svg>
+			</button>
 		</div>
 	</div>
 </div>
+
+<!-- Unregister Confirmation Modal -->
+{#if showUnregisterConfirm}
+	<div
+		class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+		on:click={() => showUnregisterConfirm = false}
+		on:keydown={(e) => e.key === 'Escape' && (showUnregisterConfirm = false)}
+		role="dialog"
+		aria-modal="true"
+		aria-labelledby="unregister-title"
+		tabindex="-1"
+	>
+		<div class="bg-gray-800 border border-gray-700 rounded-lg p-6 max-w-md mx-4" on:click|stopPropagation role="document">
+			<h3 id="unregister-title" class="text-lg font-semibold text-white mb-2">Unregister Project?</h3>
+			<p class="text-gray-400 text-sm mb-4">
+				Are you sure you want to unregister <span class="text-white font-medium">{project.name}</span>?
+				This will remove it from DevHub but won't delete any files.
+			</p>
+			<div class="flex gap-3 justify-end">
+				<button
+					class="btn btn-secondary text-sm"
+					on:click={() => showUnregisterConfirm = false}
+				>
+					Cancel
+				</button>
+				<button
+					class="btn btn-danger text-sm"
+					on:click={handleUnregister}
+					disabled={loading}
+				>
+					{#if loading}
+						<span class="animate-spin inline-block mr-1">↻</span>
+					{/if}
+					Unregister
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
 
 <!-- Log Viewer Modal -->
 {#if showLogs}

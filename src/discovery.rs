@@ -209,18 +209,26 @@ fn discover_subdirectory_services(path: &Path) -> Result<Vec<DiscoveredService>>
                 }
                 ProjectType::Flutter => {
                     // Check if it's a web project or server
-                    if subdir.join("web").exists() {
+                    if subdir.join("bin").exists() {
+                        // Dart server binary - check for main.dart or server.dart
+                        let bin_dir = subdir.join("bin");
+                        let dart_file = if bin_dir.join("server.dart").exists() {
+                            "server.dart"
+                        } else {
+                            "main.dart"
+                        };
+                        (format!("dart run bin/{}", dart_file), ServiceType::Dart)
+                    } else if subdir.join("web").exists() {
+                        // Flutter web project
                         (
                             format!("flutter run -d chrome --web-port {}", next_port),
-                            ServiceType::Shell,
+                            ServiceType::Dart,
                         )
-                    } else if subdir.join("bin").exists() {
-                        // Dart server binary
-                        ("dart run".to_string(), ServiceType::Shell)
                     } else {
+                        // Default to Flutter web
                         (
                             format!("flutter run -d chrome --web-port {}", next_port),
-                            ServiceType::Shell,
+                            ServiceType::Dart,
                         )
                     }
                 }
@@ -544,25 +552,10 @@ fn discover_flutter(
     let description = spec.description.clone();
     let mut services = Vec::new();
 
-    // Check if it's a web-capable Flutter project
-    let web_dir = path.join("web");
-    if web_dir.exists() {
-        services.push(DiscoveredService {
-            name: spec
-                .name
-                .clone()
-                .unwrap_or_else(|| "flutter_app".to_string()),
-            service_type: ServiceType::Shell,
-            command: "flutter run -d chrome --web-port 3000".to_string(),
-            port: Some(3000),
-            cwd: None,
-        });
-    }
-
-    // Check for Dart server (serverpod, shelf, dart_frog)
+    // Check for Dart server (serverpod, shelf, dart_frog) FIRST
+    // Backend servers take priority over Flutter web
     if path.join("bin").exists() {
         let bin_dir = std::fs::read_dir(path.join("bin"))?;
-        let mut found_server = false;
 
         for entry in bin_dir.flatten() {
             let file_name = entry.file_name();
@@ -574,39 +567,33 @@ fn discover_flutter(
                 if dart_name == "main" || dart_name == "server" {
                     let project_name = spec.name.clone().unwrap_or_else(|| "server".to_string());
 
-                    // Check if it's a Serverpod project (has generated directory)
-                    let _is_serverpod =
-                        path.join("lib/src/generated").exists() || path.join("generated").exists();
-
-                    services.clear(); // Remove web service if this is a backend
                     services.push(DiscoveredService {
                         name: project_name,
-                        service_type: ServiceType::Shell,
+                        service_type: ServiceType::Dart,
                         command: format!("dart run bin/{}.dart", dart_name),
                         port: Some(8080),
                         cwd: None,
                     });
-                    found_server = true;
-                    break;
-                } else if dart_name != "main" {
-                    // Other dart files in bin/ are likely services
-                    services.push(DiscoveredService {
-                        name: dart_name.to_string(),
-                        service_type: ServiceType::Shell,
-                        command: format!("dart run bin/{}.dart", dart_name),
-                        port: Some(8080 + services.len() as u16),
-                        cwd: None,
-                    });
-                    found_server = true;
+                    // Found a backend server, return early (don't add Flutter web)
+                    return Ok((ProjectType::Flutter, services, description));
                 }
             }
         }
+    }
 
-        // If we found a backend server, don't also add Flutter web
-        if found_server {
-            // Filter out any web service that was added
-            services.retain(|s| !s.command.contains("flutter run"));
-        }
+    // Check if it's a web-capable Flutter project (only if no backend server found)
+    let web_dir = path.join("web");
+    if web_dir.exists() {
+        services.push(DiscoveredService {
+            name: spec
+                .name
+                .clone()
+                .unwrap_or_else(|| "flutter_app".to_string()),
+            service_type: ServiceType::Dart,
+            command: "flutter run -d chrome --web-port 3000".to_string(),
+            port: Some(3000),
+            cwd: None,
+        });
     }
 
     Ok((ProjectType::Flutter, services, description))
@@ -834,6 +821,8 @@ fn detect_port_from_script(script: &str) -> Option<u16> {
 
 /// Convert discovered project to a manifest
 pub fn to_manifest(discovered: &DiscoveredProject) -> Manifest {
+    use crate::manifest::ProjectMode;
+
     let services: Vec<Service> = discovered
         .services
         .iter()
@@ -850,6 +839,14 @@ pub fn to_manifest(discovered: &DiscoveredProject) -> Manifest {
             depends_on: Vec::new(),
             env: HashMap::new(),
             env_file: None,
+            // Container mode fields (default to None for discovery)
+            mode: None,
+            image: None,
+            dockerfile: None,
+            build_context: None,
+            internal_port: None,
+            networks: vec![],
+            volumes: vec![],
         })
         .collect();
 
@@ -864,6 +861,8 @@ pub fn to_manifest(discovered: &DiscoveredProject) -> Manifest {
             ),
             tags: vec![discovered.project_type.to_string().to_lowercase()],
             env_files: vec![],
+            mode: ProjectMode::default(),
+            depends_on_infra: vec![],
         },
         services,
         environment: HashMap::new(),

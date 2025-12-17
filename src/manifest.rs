@@ -3,6 +3,38 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Project execution mode
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectMode {
+    /// Run services directly on host (current behavior)
+    #[default]
+    Native,
+    /// Run all services in Docker containers with network isolation
+    Container,
+    /// Mix of native and containerized services (per-service override)
+    Hybrid,
+}
+
+/// Service execution mode (for hybrid projects)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ServiceMode {
+    Native,
+    Container,
+}
+
+/// Shared infrastructure services that can be depended on
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum InfraService {
+    Postgres,
+    Redis,
+    Minio,
+    Kafka,
+    Elasticsearch,
+}
+
 /// Project manifest (devhub.toml)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
@@ -29,6 +61,14 @@ pub struct ProjectInfo {
     /// Loaded in order, later files override earlier ones
     #[serde(default)]
     pub env_files: Vec<String>,
+
+    /// Project execution mode: native (default), container, or hybrid
+    #[serde(default)]
+    pub mode: ProjectMode,
+
+    /// Shared infrastructure dependencies (postgres, redis, minio, etc.)
+    #[serde(default)]
+    pub depends_on_infra: Vec<InfraService>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,15 +109,47 @@ pub struct Service {
     /// Environment file to load for this service (relative to project root or service cwd)
     #[serde(default)]
     pub env_file: Option<String>,
+
+    // === Container mode fields ===
+
+    /// Per-service mode override (for hybrid projects)
+    #[serde(default)]
+    pub mode: Option<ServiceMode>,
+
+    /// Docker image for containerization (e.g., "dart:3.5", "node:22-alpine")
+    #[serde(default)]
+    pub image: Option<String>,
+
+    /// Path to Dockerfile (relative to project root)
+    #[serde(default)]
+    pub dockerfile: Option<String>,
+
+    /// Build context for Dockerfile (relative to project root)
+    #[serde(default)]
+    pub build_context: Option<String>,
+
+    /// Internal port for container mode (defaults to `port` field)
+    /// This is the port the service listens on inside the container
+    #[serde(default)]
+    pub internal_port: Option<u16>,
+
+    /// Additional Docker networks to attach this service to
+    #[serde(default)]
+    pub networks: Vec<String>,
+
+    /// Volume mounts for the container (e.g., ["./data:/app/data"])
+    #[serde(default)]
+    pub volumes: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ServiceType {
     RustBinary,
     Node,
     Python,
     Go,
+    Dart,
     DockerCompose,
     Shell,
 }
@@ -89,8 +161,19 @@ impl std::fmt::Display for ServiceType {
             ServiceType::Node => write!(f, "node"),
             ServiceType::Python => write!(f, "python"),
             ServiceType::Go => write!(f, "go"),
+            ServiceType::Dart => write!(f, "dart"),
             ServiceType::DockerCompose => write!(f, "docker-compose"),
             ServiceType::Shell => write!(f, "shell"),
+        }
+    }
+}
+
+impl std::fmt::Display for ProjectMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProjectMode::Native => write!(f, "native"),
+            ProjectMode::Container => write!(f, "container"),
+            ProjectMode::Hybrid => write!(f, "hybrid"),
         }
     }
 }
@@ -111,6 +194,8 @@ impl Manifest {
                 description: Some("My awesome project".to_string()),
                 tags: vec![],
                 env_files: vec![],
+                mode: ProjectMode::default(),
+                depends_on_infra: vec![],
             },
             services: vec![Service {
                 name: "web".to_string(),
@@ -124,6 +209,14 @@ impl Manifest {
                 depends_on: vec![],
                 env: HashMap::new(),
                 env_file: None,
+                // Container mode fields (all optional)
+                mode: None,
+                image: None,
+                dockerfile: None,
+                build_context: None,
+                internal_port: None,
+                networks: vec![],
+                volumes: vec![],
             }],
             environment: HashMap::new(),
         }
@@ -205,6 +298,8 @@ depends_on = ["api"]
                 description: None,
                 tags: vec![],
                 env_files: vec![],
+                mode: ProjectMode::default(),
+                depends_on_infra: vec![],
             },
             services: vec![
                 Service {
@@ -219,6 +314,13 @@ depends_on = ["api"]
                     depends_on: vec!["api".to_string()],
                     env: HashMap::new(),
                     env_file: None,
+                    mode: None,
+                    image: None,
+                    dockerfile: None,
+                    build_context: None,
+                    internal_port: None,
+                    networks: vec![],
+                    volumes: vec![],
                 },
                 Service {
                     name: "api".to_string(),
@@ -232,6 +334,13 @@ depends_on = ["api"]
                     depends_on: vec![],
                     env: HashMap::new(),
                     env_file: None,
+                    mode: None,
+                    image: None,
+                    dockerfile: None,
+                    build_context: None,
+                    internal_port: None,
+                    networks: vec![],
+                    volumes: vec![],
                 },
             ],
             environment: HashMap::new(),
@@ -260,5 +369,86 @@ env_file = "api/.env"
         let manifest: Manifest = toml::from_str(toml).unwrap();
         assert_eq!(manifest.project.env_files, vec![".env", ".env.local"]);
         assert_eq!(manifest.services[0].env_file, Some("api/.env".to_string()));
+    }
+
+    #[test]
+    fn test_parse_container_mode_manifest() {
+        let toml = r#"
+[project]
+name = "container-project"
+mode = "container"
+depends_on_infra = ["postgres", "redis"]
+
+[[services]]
+name = "api"
+type = "dart"
+command = "dart run bin/server.dart"
+port = 8080
+image = "dart:3.5"
+subdomain = "api"
+
+[[services]]
+name = "web"
+type = "node"
+command = "npm run dev"
+port = 3000
+mode = "native"
+main = true
+"#;
+
+        let manifest: Manifest = toml::from_str(toml).unwrap();
+        assert_eq!(manifest.project.name, "container-project");
+        assert_eq!(manifest.project.mode, ProjectMode::Container);
+        assert_eq!(manifest.project.depends_on_infra.len(), 2);
+        assert!(manifest.project.depends_on_infra.contains(&InfraService::Postgres));
+        assert!(manifest.project.depends_on_infra.contains(&InfraService::Redis));
+
+        // First service uses project default (container)
+        assert_eq!(manifest.services[0].image, Some("dart:3.5".to_string()));
+        assert_eq!(manifest.services[0].mode, None);
+
+        // Second service overrides to native
+        assert_eq!(manifest.services[1].mode, Some(ServiceMode::Native));
+    }
+
+    #[test]
+    fn test_parse_hybrid_mode_manifest() {
+        let toml = r#"
+[project]
+name = "hybrid-project"
+mode = "hybrid"
+
+[[services]]
+name = "api"
+type = "rust-binary"
+command = "cargo run"
+port = 8080
+mode = "native"
+
+[[services]]
+name = "worker"
+type = "node"
+command = "npm run worker"
+port = 8081
+mode = "container"
+image = "node:22-alpine"
+dockerfile = "worker/Dockerfile"
+volumes = ["./data:/app/data"]
+"#;
+
+        let manifest: Manifest = toml::from_str(toml).unwrap();
+        assert_eq!(manifest.project.mode, ProjectMode::Hybrid);
+
+        // API runs native
+        assert_eq!(manifest.services[0].mode, Some(ServiceMode::Native));
+
+        // Worker runs in container
+        assert_eq!(manifest.services[1].mode, Some(ServiceMode::Container));
+        assert_eq!(manifest.services[1].image, Some("node:22-alpine".to_string()));
+        assert_eq!(
+            manifest.services[1].dockerfile,
+            Some("worker/Dockerfile".to_string())
+        );
+        assert_eq!(manifest.services[1].volumes, vec!["./data:/app/data"]);
     }
 }

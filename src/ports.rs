@@ -57,6 +57,7 @@ pub fn get_range_for_type(service_type: &ServiceType) -> &'static PortRange {
         ServiceType::Node => &PORT_RANGES[0],          // frontend
         ServiceType::Python => &PORT_RANGES[1],        // api
         ServiceType::Go => &PORT_RANGES[1],            // api
+        ServiceType::Dart => &PORT_RANGES[1],          // api (Dart backend services)
         ServiceType::RustBinary => &PORT_RANGES[4],    // rust
         ServiceType::DockerCompose => &PORT_RANGES[2], // admin
         ServiceType::Shell => &PORT_RANGES[2],         // admin

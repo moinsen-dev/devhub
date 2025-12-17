@@ -82,6 +82,15 @@ export async function openVSCode(name: string) {
 	}
 }
 
+export async function unregisterProject(name: string) {
+	try {
+		await api.unregisterProject(name);
+		await fetchProjects();
+	} catch (e) {
+		error.set(e instanceof Error ? e.message : 'Failed to unregister project');
+	}
+}
+
 export async function startService(project: string, service: string) {
 	try {
 		await api.startService(project, service);

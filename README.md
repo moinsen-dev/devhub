@@ -261,8 +261,85 @@ Environment variables are loaded in this order (later sources override earlier):
 7. Service `cwd/.env` file
 8. Service `cwd/.env.local` file
 9. Service `env = {}` section
+10. **DevHub service URL injection** (see below)
 
 Variable interpolation is supported: `DATABASE_URL=$DB_HOST:$DB_PORT/mydb`
+
+### Service URL Environment Variables
+
+DevHub automatically injects environment variables for **service-to-service communication**. This solves the common problem of hardcoding `localhost:PORT` in your `.env` files.
+
+#### Auto-Injected Variables
+
+For every service in your project, DevHub injects:
+
+| Variable | Example | Description |
+|----------|---------|-------------|
+| `DEVHUB_<SERVICE>_URL` | `http://api.myapp.localhost` | External URL via Caddy reverse proxy |
+| `DEVHUB_<SERVICE>_INTERNAL_URL` | `http://myapp-api:8080` | Internal URL for container-to-container |
+| `DEVHUB_<SERVICE>_PORT` | `8080` | Service port |
+
+Example for a project with `api` and `frontend` services:
+```bash
+DEVHUB_API_URL=http://api.myapp.localhost
+DEVHUB_API_INTERNAL_URL=http://myapp-api:8080
+DEVHUB_API_PORT=8080
+DEVHUB_FRONTEND_URL=http://myapp.localhost
+DEVHUB_FRONTEND_INTERNAL_URL=http://myapp-frontend:3000
+DEVHUB_FRONTEND_PORT=3000
+```
+
+#### Service Reference Syntax
+
+You can reference other services in your `devhub.toml` using the `${service.property}` syntax:
+
+```toml
+[[services]]
+name = "frontend"
+type = "node"
+command = "npm run dev"
+port = 3000
+main = true
+
+[services.env]
+# These get auto-expanded by DevHub:
+NEXT_PUBLIC_API_URL = "${api.url}"           # → http://api.myapp.localhost
+INTERNAL_API_URL = "${api.internal}"         # → http://myapp-api:8080
+API_PORT = "${api.port}"                     # → 8080
+```
+
+Available properties:
+- `${service.url}` - External URL (via Caddy, for browser/client-side)
+- `${service.internal}` - Internal URL (for container-to-container communication)
+- `${service.port}` - Service port number
+
+#### Use Case: Next.js + Python Backend
+
+```toml
+[project]
+name = "demo-app"
+mode = "container"
+
+[[services]]
+name = "backend"
+type = "python"
+command = "uvicorn main:app --host 0.0.0.0 --port 8081"
+port = 8081
+subdomain = "api"
+
+[[services]]
+name = "frontend"
+type = "node"
+command = "npm run dev"
+port = 3000
+main = true
+
+[services.env]
+# Client-side API calls go through Caddy
+NEXT_PUBLIC_API_URL = "${backend.url}"
+```
+
+Your frontend automatically gets `NEXT_PUBLIC_API_URL=http://api.demo-app.localhost` - no more hardcoded `localhost:8081`!
 
 ### Service Types
 

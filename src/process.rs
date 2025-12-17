@@ -8,7 +8,10 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::process::Command;
 
-use crate::manifest::{Manifest, Service, ServiceType};
+use crate::config::Config;
+use crate::docker;
+use crate::infra;
+use crate::manifest::{Manifest, ProjectMode, Service, ServiceType};
 
 /// Load environment variables from a .env file
 /// Returns a HashMap of key-value pairs
@@ -74,6 +77,133 @@ fn interpolate_value(value: &str, env: &HashMap<String, String>) -> String {
     result
 }
 
+/// Generate the external URL for a service (accessible via browser/Caddy)
+/// Examples:
+///   - main service: http://myproject.localhost
+///   - subdomain service: http://api.myproject.localhost
+fn get_service_external_url(project_name: &str, service: &Service) -> String {
+    if service.main {
+        format!("http://{}.localhost", project_name)
+    } else if let Some(ref subdomain) = service.subdomain {
+        format!("http://{}.{}.localhost", subdomain, project_name)
+    } else {
+        format!("http://{}.{}.localhost", service.name, project_name)
+    }
+}
+
+/// Generate the internal URL for a service (container-to-container via Docker DNS)
+/// Examples:
+///   - myproject-api:8080
+fn get_service_internal_url(project_name: &str, service: &Service) -> String {
+    let container_name = format!("{}-{}", project_name, service.name);
+    let port = service.internal_port.unwrap_or(service.port);
+    format!("http://{}:{}", container_name, port)
+}
+
+/// Inject DevHub service URL variables into the environment
+/// This adds:
+///   - DEVHUB_<SERVICE>_URL: External URL (via Caddy reverse proxy)
+///   - DEVHUB_<SERVICE>_INTERNAL_URL: Internal URL (container-to-container)
+///   - DEVHUB_<SERVICE>_PORT: Service port
+fn inject_service_urls(
+    env: &mut HashMap<String, String>,
+    project_name: &str,
+    services: &[Service],
+    project_mode: &ProjectMode,
+) {
+    for service in services {
+        // Convert service name to uppercase env var format (e.g., "api" → "API", "my-service" → "MY_SERVICE")
+        let service_var_name = service.name.to_uppercase().replace('-', "_");
+
+        // External URL (always available via Caddy)
+        let external_url = get_service_external_url(project_name, service);
+        env.insert(
+            format!("DEVHUB_{}_URL", service_var_name),
+            external_url.clone(),
+        );
+
+        // Internal URL (for container-to-container communication)
+        let internal_url = get_service_internal_url(project_name, service);
+        env.insert(
+            format!("DEVHUB_{}_INTERNAL_URL", service_var_name),
+            internal_url.clone(),
+        );
+
+        // Port
+        env.insert(
+            format!("DEVHUB_{}_PORT", service_var_name),
+            service.port.to_string(),
+        );
+
+        // For convenience, also inject common variable patterns
+        // These are useful for frameworks that expect specific env var names
+        if *project_mode == ProjectMode::Container {
+            // In container mode, internal URLs are used for server-side communication
+            env.insert(
+                format!("{}_URL", service_var_name),
+                external_url,
+            );
+        }
+    }
+}
+
+/// Expand service reference syntax: ${service_name.url} and ${service_name.internal}
+/// This allows referencing other services in environment variables
+fn expand_service_references(
+    env: &mut HashMap<String, String>,
+    project_name: &str,
+    services: &[Service],
+) {
+    // Build a map of service names to their URLs
+    let mut service_urls: HashMap<String, String> = HashMap::new();
+    let mut service_internal_urls: HashMap<String, String> = HashMap::new();
+    let mut service_ports: HashMap<String, String> = HashMap::new();
+
+    for service in services {
+        service_urls.insert(
+            service.name.clone(),
+            get_service_external_url(project_name, service),
+        );
+        service_internal_urls.insert(
+            service.name.clone(),
+            get_service_internal_url(project_name, service),
+        );
+        service_ports.insert(
+            service.name.clone(),
+            service.port.to_string(),
+        );
+    }
+
+    // Regex to match ${service_name.property} syntax
+    // property can be: url, internal, port
+    let re_service_ref = regex::Regex::new(r"\$\{([a-zA-Z_][a-zA-Z0-9_-]*)\.(url|internal|port)\}").unwrap();
+
+    // Collect keys to iterate
+    let keys: Vec<String> = env.keys().cloned().collect();
+
+    for key in keys {
+        if let Some(value) = env.get(&key).cloned() {
+            let expanded = re_service_ref
+                .replace_all(&value, |caps: &regex::Captures| {
+                    let service_name = &caps[1];
+                    let property = &caps[2];
+
+                    match property {
+                        "url" => service_urls.get(service_name).cloned().unwrap_or_default(),
+                        "internal" => service_internal_urls.get(service_name).cloned().unwrap_or_default(),
+                        "port" => service_ports.get(service_name).cloned().unwrap_or_default(),
+                        _ => String::new(),
+                    }
+                })
+                .to_string();
+
+            if expanded != value {
+                env.insert(key, expanded);
+            }
+        }
+    }
+}
+
 /// Load all environment variables for a service
 /// Priority (highest to lowest):
 /// 1. Service-specific env_file (if specified)
@@ -84,6 +214,8 @@ fn interpolate_value(value: &str, env: &HashMap<String, String>) -> String {
 /// 6. Project env_files (from manifest)
 /// 7. Manifest [environment] section
 /// 8. Service env = {} section
+/// 9. DevHub service URL injection (DEVHUB_<SERVICE>_URL, etc.)
+/// 10. Service reference expansion (${backend.url}, etc.)
 pub fn load_service_environment(
     project_path: &Path,
     manifest: &Manifest,
@@ -143,7 +275,18 @@ pub fn load_service_environment(
     // 8. Add service env = {} section (highest priority)
     env.extend(service.env.clone());
 
-    // 9. Interpolate variables
+    // 9. Inject DevHub service URLs (DEVHUB_<SERVICE>_URL, DEVHUB_<SERVICE>_INTERNAL_URL, etc.)
+    inject_service_urls(
+        &mut env,
+        &manifest.project.name,
+        &manifest.services,
+        &manifest.project.mode,
+    );
+
+    // 10. Expand service reference syntax (${backend.url}, ${api.internal}, etc.)
+    expand_service_references(&mut env, &manifest.project.name, &manifest.services);
+
+    // 11. Interpolate standard variables ($VAR, ${VAR})
     interpolate_env_vars(&mut env);
 
     env
@@ -173,6 +316,14 @@ pub fn get_resolved_environment(
 
         // Add manifest environment
         env.extend(manifest.environment.clone());
+
+        // Inject DevHub service URLs for project-level view
+        inject_service_urls(
+            &mut env,
+            &manifest.project.name,
+            &manifest.services,
+            &manifest.project.mode,
+        );
 
         interpolate_env_vars(&mut env);
         env
@@ -226,7 +377,107 @@ fn is_pm2_available() -> bool {
 }
 
 /// Start a service with improved startup detection
+/// This is the original function signature for backward compatibility
 pub async fn start_service(
+    project_name: &str,
+    project_path: &Path,
+    service: &Service,
+    manifest: &Manifest,
+) -> Result<()> {
+    // Use native mode start (default behavior)
+    start_service_native(project_name, project_path, service, manifest).await
+}
+
+/// Start a service with mode awareness (native vs container)
+pub async fn start_service_with_mode(
+    project_name: &str,
+    project_path: &Path,
+    service: &Service,
+    manifest: &Manifest,
+    config: &Config,
+) -> Result<()> {
+    let effective_mode = docker::get_effective_mode(service, &manifest.project.mode);
+
+    match effective_mode {
+        ProjectMode::Container => {
+            start_service_container(project_name, project_path, service, manifest, config).await
+        }
+        ProjectMode::Native | ProjectMode::Hybrid => {
+            // Hybrid mode uses native by default unless service explicitly requests container
+            start_service_native(project_name, project_path, service, manifest).await
+        }
+    }
+}
+
+/// Start a service in container mode
+pub async fn start_service_container(
+    project_name: &str,
+    project_path: &Path,
+    service: &Service,
+    manifest: &Manifest,
+    config: &Config,
+) -> Result<()> {
+    let container_name = docker::container_name(project_name, &service.name);
+
+    // Check if container is already running
+    if docker::is_container_running(&container_name).await {
+        println!(
+            "  {} {} already running (container: {})",
+            "•".yellow(),
+            service.name,
+            container_name.cyan()
+        );
+        return Ok(());
+    }
+
+    println!(
+        "  {} Starting {} in container mode...",
+        "→".blue(),
+        service.name.yellow()
+    );
+
+    // Ensure project network exists
+    let project_network = docker::create_project_network(project_name, config).await?;
+
+    // Build environment variables
+    let mut env = load_service_environment(project_path, manifest, service);
+
+    // Add infrastructure environment variables if project depends on them
+    let infra_env = infra::get_infra_env(project_name, &manifest.project.depends_on_infra);
+    env.extend(infra_env);
+
+    // Create project database if postgres dependency exists
+    if manifest
+        .project
+        .depends_on_infra
+        .contains(&crate::manifest::InfraService::Postgres)
+    {
+        if let Err(e) = infra::create_project_database(project_name).await {
+            tracing::warn!("Could not create project database: {}", e);
+        }
+    }
+
+    // Determine networks to attach
+    let networks = vec![project_network];
+
+    // Start the container
+    docker::start_container(project_name, service, networks, env, config).await?;
+
+    // Wait for the container to be healthy
+    let internal_port = service.internal_port.unwrap_or(service.port);
+    println!(
+        "  {} {} started (container: {}, internal port: {})",
+        "✓".green(),
+        service.name,
+        container_name.cyan(),
+        internal_port
+    );
+
+    Ok(())
+}
+
+/// Start a service in native mode (original behavior)
+async fn start_service_native(
     project_name: &str,
     project_path: &Path,
     service: &Service,
@@ -325,6 +576,7 @@ pub async fn start_service(
         ServiceType::Node => 30,        // Node is usually fast
         ServiceType::Python => 15,
         ServiceType::Go => 30,
+        ServiceType::Dart => 30,        // Dart is usually fast
         ServiceType::DockerCompose => 60,
         ServiceType::Shell => 10,
     };
@@ -557,7 +809,57 @@ fn check_for_startup_error(stderr_path: &Path) -> Option<String> {
 }
 
 /// Stop a service by killing the process on its port
+/// This is the original function signature for backward compatibility
 pub async fn stop_service(project_name: &str, service: &Service) -> Result<()> {
+    // Use native mode stop (default behavior)
+    stop_service_native(project_name, service).await
+}
+
+/// Stop a service with mode awareness (native vs container)
+pub async fn stop_service_with_mode(
+    project_name: &str,
+    service: &Service,
+    manifest: &Manifest,
+) -> Result<()> {
+    let effective_mode = docker::get_effective_mode(service, &manifest.project.mode);
+
+    match effective_mode {
+        ProjectMode::Container => stop_service_container(project_name, service).await,
+        ProjectMode::Native | ProjectMode::Hybrid => {
+            stop_service_native(project_name, service).await
+        }
+    }
+}
+
+/// Stop a service running in container mode
+pub async fn stop_service_container(project_name: &str, service: &Service) -> Result<()> {
+    let container_name = docker::container_name(project_name, &service.name);
+
+    // Check if container is running
+    if !docker::is_container_running(&container_name).await {
+        println!(
+            "  {} {} not running (container: {})",
+            "•".dimmed(),
+            service.name,
+            container_name.cyan()
+        );
+        return Ok(());
+    }
+
+    println!(
+        "  {} Stopping {} (container: {})...",
+        "→".blue(),
+        service.name.yellow(),
+        container_name.cyan()
+    );
+
+    docker::stop_container(project_name, &service.name).await?;
+
+    Ok(())
+}
+
+/// Stop a service running in native mode (original behavior)
+async fn stop_service_native(project_name: &str, service: &Service) -> Result<()> {
     // Handle Docker Compose services separately
     if service.service_type == ServiceType::DockerCompose {
         return stop_docker_compose_service(project_name, service).await;

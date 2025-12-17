@@ -123,6 +123,8 @@ Environment variables are loaded in this order (later sources override earlier):
 7. Service `cwd/.env` file
 8. Service `cwd/.env.local` file
 9. Service `env = {}` section
+10. **DevHub service URL injection**
+11. **Service reference expansion**
 
 ### Variable Interpolation
 
@@ -135,6 +137,91 @@ DB_PORT = "5432"
 DB_NAME = "myapp"
 DATABASE_URL = "postgres://${DB_HOST}:${DB_PORT}/${DB_NAME}"
 ```
+
+## Service URL Environment Variables
+
+DevHub automatically injects environment variables for **service-to-service communication**. This eliminates the need to hardcode `localhost:PORT` in your `.env` files.
+
+### Auto-Injected Variables
+
+For every service in your project, DevHub injects:
+
+| Variable | Example | Description |
+|----------|---------|-------------|
+| `DEVHUB_<SERVICE>_URL` | `http://api.myapp.localhost` | External URL via Caddy reverse proxy |
+| `DEVHUB_<SERVICE>_INTERNAL_URL` | `http://myapp-api:8080` | Internal URL for container-to-container |
+| `DEVHUB_<SERVICE>_PORT` | `8080` | Service port |
+
+Service names are converted to uppercase with hyphens replaced by underscores (e.g., `my-api` → `MY_API`).
+
+View all injected variables with:
+
+```bash
+devhub env my-project --service frontend | grep DEVHUB_
+```
+
+### Service Reference Syntax
+
+You can reference other services in your `devhub.toml` using the `${service.property}` syntax:
+
+```toml
+[[services]]
+name = "frontend"
+type = "node"
+command = "npm run dev"
+port = 3000
+main = true
+
+[services.env]
+# These get auto-expanded by DevHub:
+NEXT_PUBLIC_API_URL = "${backend.url}"        # → http://backend.myapp.localhost
+INTERNAL_API_URL = "${backend.internal}"      # → http://myapp-backend:8080
+API_PORT = "${backend.port}"                  # → 8080
+```
+
+Available properties:
+
+| Property | Description |
+|----------|-------------|
+| `${service.url}` | External URL via Caddy (for browser/client-side requests) |
+| `${service.internal}` | Internal URL for container-to-container communication |
+| `${service.port}` | Service port number |
+
+### Use Case: Frontend + Backend
+
+A common pattern is a Next.js frontend calling a Python/Node/Rust backend:
+
+```toml
+[project]
+name = "my-fullstack-app"
+
+[[services]]
+name = "backend"
+type = "python"
+command = "uvicorn main:app --host 0.0.0.0 --port 8081"
+port = 8081
+subdomain = "api"
+
+[[services]]
+name = "frontend"
+type = "node"
+command = "npm run dev"
+port = 3000
+main = true
+depends_on = ["backend"]
+
+[services.env]
+# Client-side API calls go through Caddy
+NEXT_PUBLIC_API_URL = "${backend.url}"
+```
+
+The frontend automatically receives `NEXT_PUBLIC_API_URL=http://api.my-fullstack-app.localhost`.
+
+**Benefits:**
+- No hardcoded `localhost:PORT` in `.env` files
+- Works consistently across native and container modes
+- URLs update automatically based on project name
+- Supports both browser requests (external URLs) and server-side requests (internal URLs)
 
 ## Monorepo Configuration
 

@@ -11,6 +11,7 @@
 //!   GET  /api/projects/:name/logs    - Get logs
 //!   POST /api/projects/:name/open-terminal - Open project in Terminal
 //!   POST /api/projects/:name/open-vscode   - Open project in VS Code
+//!   DELETE /api/projects/:name             - Unregister a project
 
 /// DevHub version (from Cargo.toml)
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -19,7 +20,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::Json,
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -127,6 +128,7 @@ pub fn create_router(registry: Registry) -> Router {
         )
         .route("/api/projects/:name/open-terminal", post(open_terminal))
         .route("/api/projects/:name/open-vscode", post(open_vscode))
+        .route("/api/projects/:name", delete(unregister_project))
         .layer(cors)
         .with_state(state)
 }
@@ -510,35 +512,76 @@ async fn open_vscode(
 
     let path = entry.path.display().to_string();
 
-    // Try 'code' command first (VS Code CLI)
-    let output = std::process::Command::new("code")
-        .arg(&path)
+    // Common VS Code CLI locations (daemon may not have user's PATH)
+    let code_paths = [
+        "/usr/local/bin/code",
+        "/opt/homebrew/bin/code",
+        "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+        "code", // Fallback to PATH lookup
+    ];
+
+    // Try each known path for the 'code' command
+    for code_cmd in &code_paths {
+        let result = std::process::Command::new(code_cmd)
+            .arg(&path)
+            .output();
+
+        if let Ok(output) = result {
+            if output.status.success() {
+                return Ok(Json(OpenResponse {
+                    success: true,
+                    message: format!("Opened VS Code at {}", path),
+                }));
+            }
+        }
+    }
+
+    // Fallback: Try opening via 'open' command on macOS
+    let fallback = std::process::Command::new("open")
+        .args(["-a", "Visual Studio Code", &path])
         .output()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    if output.status.success() {
+    if fallback.status.success() {
         Ok(Json(OpenResponse {
             success: true,
             message: format!("Opened VS Code at {}", path),
         }))
     } else {
-        // Fallback: Try opening via 'open' command on macOS
-        let fallback = std::process::Command::new("open")
-            .args(["-a", "Visual Studio Code", &path])
-            .output()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let stderr = String::from_utf8_lossy(&fallback.stderr);
+        Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to open VS Code: {}. Make sure VS Code is installed.", stderr),
+        ))
+    }
+}
 
-        if fallback.status.success() {
-            Ok(Json(OpenResponse {
-                success: true,
-                message: format!("Opened VS Code at {}", path),
-            }))
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            Err((
+/// Unregister (remove) a project from DevHub
+async fn unregister_project(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> Result<Json<OpenResponse>, (StatusCode, String)> {
+    let mut registry = state.registry.write().await;
+
+    if registry.unregister(&name) {
+        registry.save().map_err(|e| {
+            (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to open VS Code: {}", stderr),
-            ))
-        }
+                format!("Failed to save registry: {}", e),
+            )
+        })?;
+
+        // Also remove Caddy configuration for this project
+        let _ = caddy::remove_config(&name);
+
+        Ok(Json(OpenResponse {
+            success: true,
+            message: format!("Project '{}' has been unregistered", name),
+        }))
+    } else {
+        Err((
+            StatusCode::NOT_FOUND,
+            format!("Project '{}' not found", name),
+        ))
     }
 }

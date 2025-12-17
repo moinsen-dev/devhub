@@ -47,24 +47,24 @@ devhub status             # See everything at a glance
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        DevHub Dashboard (SvelteKit)                  │
-│                    http://devhub.localhost:5173                      │
+│                        DevHub Dashboard (SvelteKit)                 │
+│                    http://devhub.localhost:5173                     │
 │  Features: Project grid, Start/Stop buttons, Search, Status polling │
 └─────────────────────────────────────────────────────────────────────┘
                               │ HTTP (proxied)
 ┌─────────────────────────────┴───────────────────────────────────────┐
-│                      DevHub Daemon (Rust/Axum)                       │
-│                    http://localhost:9876                             │
+│                      DevHub Daemon (Rust/Axum)                      │
+│                    http://localhost:9876                            │
 │   - REST API (/api/projects, /api/projects/:name/start, etc.)       │
 │   - Registry management (~/.devhub/registry.json)                   │
 │   - Process spawning (native + PM2 for Node)                        │
-│   - Docker Compose integration                                       │
-│   - Health check polling                                             │
-│   - Caddy config generation                                          │
+│   - Docker Compose integration                                      │
+│   - Health check polling                                            │
+│   - Caddy config generation                                         │
 └─────────────────────────────────────────────────────────────────────┘
                               │
 ┌─────────────────────────────┴───────────────────────────────────────┐
-│                      Caddy Reverse Proxy (Docker)                    │
+│                      Caddy Reverse Proxy (Docker)                   │
 │   http://project.localhost → localhost:PORT                         │
 └─────────────────────────────────────────────────────────────────────┘
 ```

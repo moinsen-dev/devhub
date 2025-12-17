@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Daemon Lifecycle Management**
+  - `devhub daemon start` - Start daemon as background service (via brew services or direct)
+  - `devhub daemon stop` - Stop running daemon with escalating kill strategy
+  - `devhub daemon restart` - Restart the daemon
+  - `devhub daemon status` - Show daemon status, version, and brew service info
+  - `devhub daemon run` - Run daemon in foreground (original behavior, default when no subcommand)
+
+- **Interactive Daemon Start**
+  - CLI now detects when daemon is not running and offers to start it
+  - Detects version mismatches between CLI and daemon, offers to restart
+  - Backward compatible: detects old daemons without `/api/version` endpoint
+
+### Changed
+
+- `devhub daemon` now supports subcommands while maintaining backward compatibility
+- Improved daemon health check with fallback to `/api/projects` endpoint for old versions
+
 ## [0.3.1] - 2025-12-17
 
 ### Added

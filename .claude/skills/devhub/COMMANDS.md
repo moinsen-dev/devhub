@@ -257,17 +257,47 @@ Arguments:
 cd $(devhub path my-project)
 ```
 
-## Utilities
+## Daemon Management
 
 ### `devhub daemon`
-Run the REST API server for the web dashboard.
+Manage the DevHub daemon (REST API server for dashboard and CLI commands).
 
 ```bash
-devhub daemon [--port <PORT>]
+devhub daemon [SUBCOMMAND] [--port <PORT>]
+
+Subcommands:
+  start    Start daemon as background service (via brew services or directly)
+  stop     Stop the running daemon
+  restart  Restart the daemon
+  status   Show daemon status, version, and service info
+  run      Run daemon in foreground (default if no subcommand)
 
 Options:
   --port, -p <PORT>  Port to listen on (default: 9876)
 ```
+
+Examples:
+```bash
+# Start daemon in background
+devhub daemon start
+
+# Check if daemon is running
+devhub daemon status
+
+# Stop the daemon
+devhub daemon stop
+
+# Run in foreground (for debugging)
+devhub daemon run
+
+# Or using Homebrew (macOS)
+brew services start devhub
+brew services stop devhub
+```
+
+**Note:** The CLI automatically detects when the daemon is not running and offers to start it interactively.
+
+## Utilities
 
 ### `devhub completions`
 Generate shell completions.

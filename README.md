@@ -117,8 +117,11 @@ devhub ports --check
 ### 5. Launch the Dashboard (Optional)
 
 ```bash
-# Start the API daemon
-devhub daemon &
+# Start the daemon as a background service
+devhub daemon start
+
+# Or if installed via Homebrew
+brew services start devhub
 
 # Start the UI
 cd devhub-ui && npm install && npm run dev
@@ -195,8 +198,18 @@ devhub path <project>          # Print project path (for cd integration)
 devhub env <project>           # Show resolved environment variables
 devhub env <project> -s api    # Show env for specific service
 devhub env <project> -f export # Output in shell export format
-devhub daemon [--port 9876]    # Run API server for dashboard
 devhub completions <shell>     # Generate shell completions (bash/zsh/fish)
+```
+
+### Daemon Management
+
+```bash
+devhub daemon                  # Run daemon in foreground (default)
+devhub daemon start            # Start daemon as background service
+devhub daemon stop             # Stop running daemon
+devhub daemon restart          # Restart daemon
+devhub daemon status           # Show daemon status and version
+devhub daemon --port 9876      # Run on custom port
 ```
 
 ---

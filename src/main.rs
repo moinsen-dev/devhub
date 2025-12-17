@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 use colored::Colorize;
-use std::io;
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 mod api;
@@ -15,6 +15,236 @@ mod process;
 mod registry;
 
 use registry::Registry;
+
+/// CLI version (from Cargo.toml)
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Daemon status result
+#[derive(Debug)]
+enum DaemonStatus {
+    /// Daemon is running with matching version
+    Running,
+    /// Daemon is running but version mismatch
+    VersionMismatch { daemon_version: String },
+    /// Daemon is not running
+    NotRunning,
+}
+
+/// Check if the daemon is running and its version matches
+async fn check_daemon() -> DaemonStatus {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return DaemonStatus::NotRunning,
+    };
+
+    // First try the version endpoint
+    match client.get("http://localhost:9876/api/version").send().await {
+        Ok(resp) => {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                if let Some(daemon_version) = json.get("version").and_then(|v| v.as_str()) {
+                    if daemon_version == VERSION {
+                        DaemonStatus::Running
+                    } else {
+                        DaemonStatus::VersionMismatch {
+                            daemon_version: daemon_version.to_string(),
+                        }
+                    }
+                } else {
+                    // Old daemon without version field - treat as version mismatch
+                    DaemonStatus::VersionMismatch {
+                        daemon_version: "unknown (old version)".to_string(),
+                    }
+                }
+            } else {
+                // Response but not JSON - check if any endpoint works
+                if client
+                    .get("http://localhost:9876/api/projects")
+                    .send()
+                    .await
+                    .is_ok()
+                {
+                    DaemonStatus::VersionMismatch {
+                        daemon_version: "unknown (old version)".to_string(),
+                    }
+                } else {
+                    DaemonStatus::NotRunning
+                }
+            }
+        }
+        Err(_) => {
+            // Version endpoint failed - check if daemon is running but old version
+            if client
+                .get("http://localhost:9876/api/projects")
+                .send()
+                .await
+                .is_ok()
+            {
+                DaemonStatus::VersionMismatch {
+                    daemon_version: "unknown (old version)".to_string(),
+                }
+            } else {
+                DaemonStatus::NotRunning
+            }
+        }
+    }
+}
+
+/// Handle daemon status - warn and offer to start if not running
+async fn handle_daemon_status(status: &DaemonStatus) {
+    match status {
+        DaemonStatus::Running => {}
+        DaemonStatus::VersionMismatch { daemon_version } => {
+            eprintln!(
+                "{} Daemon version mismatch: daemon={}, cli={}",
+                "⚠".yellow(),
+                daemon_version.red(),
+                VERSION.green()
+            );
+            eprintln!(
+                "  {} Run: {}",
+                "→".blue(),
+                "brew services restart devhub".cyan()
+            );
+            eprintln!();
+
+            // Offer to restart the daemon
+            if ask_yes_no("Restart the daemon now?") {
+                restart_daemon().await;
+            }
+        }
+        DaemonStatus::NotRunning => {
+            eprintln!("{} DevHub daemon is not running", "⚠".yellow());
+
+            // Offer to start the daemon
+            if ask_yes_no("Start the daemon now?") {
+                start_daemon().await;
+            } else {
+                eprintln!(
+                    "  {} Start manually with: {}",
+                    "→".blue(),
+                    "brew services start devhub".cyan()
+                );
+                eprintln!(
+                    "  {} Or run: {}",
+                    "→".blue(),
+                    "devhub daemon".cyan()
+                );
+                eprintln!();
+            }
+        }
+    }
+}
+
+/// Ask a yes/no question and return true if yes
+fn ask_yes_no(question: &str) -> bool {
+    eprint!("{} {} [Y/n] ", "?".cyan(), question);
+    io::stderr().flush().ok();
+
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_ok() {
+        let trimmed = input.trim().to_lowercase();
+        trimmed.is_empty() || trimmed == "y" || trimmed == "yes"
+    } else {
+        false
+    }
+}
+
+/// Start the daemon in the background
+async fn start_daemon() {
+    eprintln!("{} Starting daemon...", "→".blue());
+
+    // Try brew services first (preferred for managed service)
+    let brew_result = std::process::Command::new("brew")
+        .args(["services", "start", "devhub"])
+        .output();
+
+    match brew_result {
+        Ok(output) if output.status.success() => {
+            // Wait a moment for the daemon to start
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+            // Verify it started
+            if matches!(check_daemon().await, DaemonStatus::Running) {
+                eprintln!("{} Daemon started successfully", "✓".green());
+            } else {
+                eprintln!(
+                    "{} Daemon may still be starting, check with: {}",
+                    "!".yellow(),
+                    "devhub status".cyan()
+                );
+            }
+            eprintln!();
+        }
+        _ => {
+            // Fallback: start daemon directly in background
+            eprintln!(
+                "{} brew services not available, starting daemon directly...",
+                "!".yellow()
+            );
+
+            match std::process::Command::new(std::env::current_exe().unwrap_or_default())
+                .arg("daemon")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                Ok(_) => {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    if matches!(check_daemon().await, DaemonStatus::Running) {
+                        eprintln!("{} Daemon started successfully", "✓".green());
+                    } else {
+                        eprintln!(
+                            "{} Daemon may still be starting, check with: {}",
+                            "!".yellow(),
+                            "devhub status".cyan()
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{} Failed to start daemon: {}", "✗".red(), e);
+                }
+            }
+            eprintln!();
+        }
+    }
+}
+
+/// Restart the daemon
+async fn restart_daemon() {
+    eprintln!("{} Restarting daemon...", "→".blue());
+
+    let brew_result = std::process::Command::new("brew")
+        .args(["services", "restart", "devhub"])
+        .output();
+
+    match brew_result {
+        Ok(output) if output.status.success() => {
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+            if matches!(check_daemon().await, DaemonStatus::Running) {
+                eprintln!("{} Daemon restarted successfully", "✓".green());
+            } else {
+                eprintln!(
+                    "{} Daemon may still be starting, check with: {}",
+                    "!".yellow(),
+                    "devhub status".cyan()
+                );
+            }
+            eprintln!();
+        }
+        _ => {
+            eprintln!(
+                "{} Could not restart via brew services. Please restart manually:",
+                "!".yellow()
+            );
+            eprintln!("  {} {}", "→".blue(), "brew services restart devhub".cyan());
+            eprintln!();
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "devhub")]
@@ -175,9 +405,12 @@ enum Commands {
         resolve: bool,
     },
 
-    /// Run the DevHub daemon (API server for dashboard)
+    /// Manage the DevHub daemon (API server for dashboard)
     Daemon {
-        /// Port to listen on
+        #[command(subcommand)]
+        action: Option<DaemonAction>,
+
+        /// Port to listen on (only for 'run' action)
         #[arg(short, long, default_value = "9876")]
         port: u16,
     },
@@ -256,6 +489,20 @@ enum FavAction {
     },
 }
 
+#[derive(Subcommand)]
+enum DaemonAction {
+    /// Start the daemon (via brew services or directly)
+    Start,
+    /// Stop the daemon
+    Stop,
+    /// Restart the daemon
+    Restart,
+    /// Show daemon status
+    Status,
+    /// Run the daemon in foreground (default if no subcommand)
+    Run,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
@@ -311,7 +558,7 @@ async fn main() -> Result<()> {
             dry_run,
         } => cmd_scan(&mut registry, paths, depth, auto_register, dry_run).await,
         Commands::Ports { check, resolve } => cmd_ports(&registry, check, resolve).await,
-        Commands::Daemon { port } => cmd_daemon(port).await,
+        Commands::Daemon { action, port } => cmd_daemon_dispatch(action, port).await,
         Commands::Completions { shell } => cmd_completions(shell),
         Commands::Open { project, service } => cmd_open(&registry, &project, service).await,
         Commands::Code { project } => cmd_code(&registry, &project).await,
@@ -457,6 +704,10 @@ async fn cmd_list(registry: &Registry) -> Result<()> {
 }
 
 async fn cmd_status(registry: &Registry) -> Result<()> {
+    // Check daemon status
+    let daemon_status = check_daemon().await;
+    handle_daemon_status(&daemon_status).await;
+
     let projects = registry.list();
 
     if projects.is_empty() {
@@ -522,6 +773,10 @@ async fn cmd_start(
     all: bool,
     favorites_only: bool,
 ) -> Result<()> {
+    // Check daemon status
+    let daemon_status = check_daemon().await;
+    handle_daemon_status(&daemon_status).await;
+
     // Handle batch operations
     if all || favorites_only {
         let projects_to_start: Vec<_> = if favorites_only {
@@ -631,6 +886,10 @@ async fn cmd_stop(
     all: bool,
     favorites_only: bool,
 ) -> Result<()> {
+    // Check daemon status
+    let daemon_status = check_daemon().await;
+    handle_daemon_status(&daemon_status).await;
+
     // Handle batch operations
     if all || favorites_only {
         let projects_to_stop: Vec<_> = if favorites_only {
@@ -747,6 +1006,10 @@ async fn cmd_logs(
     service: Option<String>,
     follow: bool,
 ) -> Result<()> {
+    // Check daemon status
+    let daemon_status = check_daemon().await;
+    handle_daemon_status(&daemon_status).await;
+
     let entry = registry
         .get(project)
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", project))?;
@@ -1091,7 +1354,275 @@ fn is_system_env_var(key: &str) -> bool {
         || key == "LS_COLORS"
 }
 
-async fn cmd_daemon(port: u16) -> Result<()> {
+/// Dispatch daemon subcommands
+async fn cmd_daemon_dispatch(action: Option<DaemonAction>, port: u16) -> Result<()> {
+    match action {
+        None | Some(DaemonAction::Run) => cmd_daemon_run(port).await,
+        Some(DaemonAction::Start) => cmd_daemon_start().await,
+        Some(DaemonAction::Stop) => cmd_daemon_stop().await,
+        Some(DaemonAction::Restart) => cmd_daemon_restart().await,
+        Some(DaemonAction::Status) => cmd_daemon_status().await,
+    }
+}
+
+/// Start the daemon via brew services or directly in background
+async fn cmd_daemon_start() -> Result<()> {
+    // Check if already running
+    let status = check_daemon().await;
+    if matches!(status, DaemonStatus::Running) {
+        println!("{} Daemon is already running", "✓".green());
+        return Ok(());
+    }
+
+    println!("{} Starting daemon...", "→".blue());
+
+    // Try brew services first
+    let brew_result = std::process::Command::new("brew")
+        .args(["services", "start", "devhub"])
+        .output();
+
+    match brew_result {
+        Ok(output) if output.status.success() => {
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+            match check_daemon().await {
+                DaemonStatus::Running => {
+                    println!("{} Daemon started successfully", "✓".green());
+                    println!("  {} API: http://localhost:9876", "→".blue());
+                }
+                DaemonStatus::VersionMismatch { daemon_version } => {
+                    println!(
+                        "{} Daemon started but version mismatch (daemon={}, cli={})",
+                        "!".yellow(),
+                        daemon_version,
+                        VERSION
+                    );
+                    println!("  {} Run: {}", "→".blue(), "devhub daemon restart".cyan());
+                }
+                DaemonStatus::NotRunning => {
+                    println!(
+                        "{} Daemon may still be starting, check with: {}",
+                        "!".yellow(),
+                        "devhub daemon status".cyan()
+                    );
+                }
+            }
+        }
+        _ => {
+            // Fallback: start daemon directly in background
+            println!(
+                "{} brew services not available, starting daemon directly...",
+                "!".yellow()
+            );
+
+            match std::process::Command::new(std::env::current_exe().unwrap_or_default())
+                .args(["daemon", "run"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                Ok(_) => {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    if matches!(check_daemon().await, DaemonStatus::Running) {
+                        println!("{} Daemon started successfully", "✓".green());
+                        println!("  {} API: http://localhost:9876", "→".blue());
+                    } else {
+                        println!(
+                            "{} Daemon may still be starting, check with: {}",
+                            "!".yellow(),
+                            "devhub daemon status".cyan()
+                        );
+                    }
+                }
+                Err(e) => {
+                    anyhow::bail!("Failed to start daemon: {}", e);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Stop the daemon
+async fn cmd_daemon_stop() -> Result<()> {
+    // Check if running
+    let status = check_daemon().await;
+    if matches!(status, DaemonStatus::NotRunning) {
+        println!("{} Daemon is not running", "!".yellow());
+        return Ok(());
+    }
+
+    println!("{} Stopping daemon...", "→".blue());
+
+    // Try brew services first
+    let _ = std::process::Command::new("brew")
+        .args(["services", "stop", "devhub"])
+        .output();
+
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+    // Check if still running after brew services stop
+    if matches!(check_daemon().await, DaemonStatus::NotRunning) {
+        println!("{} Daemon stopped", "✓".green());
+        return Ok(());
+    }
+
+    // Still running - kill directly by port
+    let _ = std::process::Command::new("sh")
+        .args(["-c", "lsof -ti :9876 | xargs kill 2>/dev/null"])
+        .output();
+
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+    if matches!(check_daemon().await, DaemonStatus::NotRunning) {
+        println!("{} Daemon stopped", "✓".green());
+    } else {
+        // Try SIGKILL
+        let _ = std::process::Command::new("sh")
+            .args(["-c", "lsof -ti :9876 | xargs kill -9 2>/dev/null"])
+            .output();
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+        if matches!(check_daemon().await, DaemonStatus::NotRunning) {
+            println!("{} Daemon stopped", "✓".green());
+        } else {
+            println!(
+                "{} Could not stop daemon. Try: {}",
+                "✗".red(),
+                "kill -9 $(lsof -ti :9876)".cyan()
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Restart the daemon
+async fn cmd_daemon_restart() -> Result<()> {
+    println!("{} Restarting daemon...", "→".blue());
+
+    // Try brew services first
+    let brew_result = std::process::Command::new("brew")
+        .args(["services", "restart", "devhub"])
+        .output();
+
+    match brew_result {
+        Ok(output) if output.status.success() => {
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+            match check_daemon().await {
+                DaemonStatus::Running => {
+                    println!("{} Daemon restarted successfully", "✓".green());
+                    println!("  {} API: http://localhost:9876", "→".blue());
+                }
+                _ => {
+                    println!(
+                        "{} Daemon may still be starting, check with: {}",
+                        "!".yellow(),
+                        "devhub daemon status".cyan()
+                    );
+                }
+            }
+        }
+        _ => {
+            // Fallback: stop then start
+            println!(
+                "{} brew services not available, restarting manually...",
+                "!".yellow()
+            );
+
+            cmd_daemon_stop().await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            cmd_daemon_start().await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Show daemon status
+async fn cmd_daemon_status() -> Result<()> {
+    println!("{}", "DevHub Daemon Status:".bold());
+    println!();
+
+    match check_daemon().await {
+        DaemonStatus::Running => {
+            println!("  {} Status: {}", "●".green(), "Running".green());
+            println!("  {} Version: {}", "→".blue(), VERSION.cyan());
+            println!("  {} API: http://localhost:9876", "→".blue());
+
+            // Try to get more info from the API
+            if let Ok(client) = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(2))
+                .build()
+            {
+                if let Ok(resp) = client.get("http://localhost:9876/api/projects").send().await {
+                    if let Ok(projects) = resp.json::<Vec<serde_json::Value>>().await {
+                        println!("  {} Projects: {}", "→".blue(), projects.len());
+                    }
+                }
+            }
+        }
+        DaemonStatus::VersionMismatch { daemon_version } => {
+            println!("  {} Status: {}", "●".yellow(), "Running (version mismatch)".yellow());
+            println!("  {} Daemon version: {}", "→".blue(), daemon_version.red());
+            println!("  {} CLI version: {}", "→".blue(), VERSION.green());
+            println!();
+            println!(
+                "  {} Run: {}",
+                "!".yellow(),
+                "devhub daemon restart".cyan()
+            );
+        }
+        DaemonStatus::NotRunning => {
+            println!("  {} Status: {}", "○".dimmed(), "Not running".dimmed());
+            println!();
+            println!(
+                "  {} Start with: {}",
+                "→".blue(),
+                "devhub daemon start".cyan()
+            );
+        }
+    }
+
+    // Check brew services status
+    println!();
+    let brew_status = std::process::Command::new("brew")
+        .args(["services", "info", "devhub", "--json"])
+        .output();
+
+    if let Ok(output) = brew_status {
+        if output.status.success() {
+            if let Ok(json) = serde_json::from_slice::<Vec<serde_json::Value>>(&output.stdout) {
+                if let Some(info) = json.first() {
+                    let status = info.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    let running = info.get("running").and_then(|v| v.as_bool()).unwrap_or(false);
+
+                    println!("{}", "Homebrew Service:".bold());
+                    println!(
+                        "  {} Status: {}",
+                        if running { "●".green() } else { "○".dimmed() },
+                        status
+                    );
+
+                    if let Some(file) = info.get("file").and_then(|v| v.as_str()) {
+                        println!("  {} Plist: {}", "→".blue(), file.dimmed());
+                    }
+                    if let Some(log) = info.get("log_path").and_then(|v| v.as_str()) {
+                        println!("  {} Log: {}", "→".blue(), log.dimmed());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Run the daemon in foreground
+async fn cmd_daemon_run(port: u16) -> Result<()> {
     let registry = Registry::load()?;
 
     println!(

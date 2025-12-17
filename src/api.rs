@@ -1,6 +1,8 @@
 //! DevHub REST API for the dashboard
 //!
 //! Endpoints:
+//!   GET  /api/version           - Get daemon version
+//!   GET  /api/health            - Health check
 //!   GET  /api/projects          - List all projects with status
 //!   GET  /api/projects/:name    - Get single project details
 //!   POST /api/projects/:name/start   - Start a project
@@ -9,6 +11,9 @@
 //!   GET  /api/projects/:name/logs    - Get logs
 //!   POST /api/projects/:name/open-terminal - Open project in Terminal
 //!   POST /api/projects/:name/open-vscode   - Open project in VS Code
+
+/// DevHub version (from Cargo.toml)
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 use axum::{
     extract::{Path, Query, State},
@@ -62,6 +67,36 @@ fn default_lines() -> usize {
     100
 }
 
+/// Version response
+#[derive(Debug, Serialize)]
+pub struct VersionResponse {
+    pub version: String,
+    pub daemon: bool,
+}
+
+/// Health response
+#[derive(Debug, Serialize)]
+pub struct HealthResponse {
+    pub status: String,
+    pub version: String,
+}
+
+/// Get daemon version
+async fn get_version() -> Json<VersionResponse> {
+    Json(VersionResponse {
+        version: VERSION.to_string(),
+        daemon: true,
+    })
+}
+
+/// Health check endpoint
+async fn health_check() -> Json<HealthResponse> {
+    Json(HealthResponse {
+        status: "ok".to_string(),
+        version: VERSION.to_string(),
+    })
+}
+
 /// Create the API router
 pub fn create_router(registry: Registry) -> Router {
     let state = Arc::new(AppState {
@@ -74,6 +109,8 @@ pub fn create_router(registry: Registry) -> Router {
         .allow_headers(Any);
 
     Router::new()
+        .route("/api/version", get(get_version))
+        .route("/api/health", get(health_check))
         .route("/api/projects", get(list_projects))
         .route("/api/projects/:name", get(get_project))
         .route("/api/projects/:name/start", post(start_project))

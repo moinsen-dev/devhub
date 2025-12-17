@@ -2,6 +2,11 @@
 //!
 //! This module provides functionality for managing Docker networks and containers
 //! to enable port isolation across multiple projects.
+//!
+//! Note: This module is foundation code for CR-001 (Docker Network Isolation).
+//! Functions are not yet wired into the main CLI but will be in a future release.
+
+#![allow(dead_code)]
 
 use anyhow::{Context, Result};
 use bollard::container::{
@@ -40,16 +45,18 @@ pub async fn ensure_shared_network(config: &Config) -> Result<()> {
     let network_name = &config.shared_network;
 
     // Check if network exists
-    let filters: HashMap<String, Vec<String>> =
-        [("name".to_string(), vec![network_name.clone()])]
-            .into_iter()
-            .collect();
+    let filters: HashMap<String, Vec<String>> = [("name".to_string(), vec![network_name.clone()])]
+        .into_iter()
+        .collect();
 
     let networks = docker
         .list_networks(Some(ListNetworksOptions { filters }))
         .await?;
 
-    if networks.iter().any(|n| n.name.as_deref() == Some(network_name)) {
+    if networks
+        .iter()
+        .any(|n| n.name.as_deref() == Some(network_name))
+    {
         tracing::debug!("Shared network '{}' already exists", network_name);
         return Ok(());
     }
@@ -77,16 +84,18 @@ pub async fn create_project_network(project_name: &str, config: &Config) -> Resu
     let network_name = format!("{}-{}", config.network_prefix, project_name);
 
     // Check if network already exists
-    let filters: HashMap<String, Vec<String>> =
-        [("name".to_string(), vec![network_name.clone()])]
-            .into_iter()
-            .collect();
+    let filters: HashMap<String, Vec<String>> = [("name".to_string(), vec![network_name.clone()])]
+        .into_iter()
+        .collect();
 
     let networks = docker
         .list_networks(Some(ListNetworksOptions { filters }))
         .await?;
 
-    if networks.iter().any(|n| n.name.as_deref() == Some(&network_name)) {
+    if networks
+        .iter()
+        .any(|n| n.name.as_deref() == Some(&network_name))
+    {
         tracing::debug!("Project network '{}' already exists", network_name);
         return Ok(network_name);
     }
@@ -114,16 +123,18 @@ pub async fn remove_project_network(project_name: &str, config: &Config) -> Resu
     let network_name = format!("{}-{}", config.network_prefix, project_name);
 
     // Check if network exists before trying to remove
-    let filters: HashMap<String, Vec<String>> =
-        [("name".to_string(), vec![network_name.clone()])]
-            .into_iter()
-            .collect();
+    let filters: HashMap<String, Vec<String>> = [("name".to_string(), vec![network_name.clone()])]
+        .into_iter()
+        .collect();
 
     let networks = docker
         .list_networks(Some(ListNetworksOptions { filters }))
         .await?;
 
-    if networks.iter().any(|n| n.name.as_deref() == Some(&network_name)) {
+    if networks
+        .iter()
+        .any(|n| n.name.as_deref() == Some(&network_name))
+    {
         docker.remove_network(&network_name).await?;
         println!(
             "  {} Removed project network: {}",
@@ -139,16 +150,12 @@ pub async fn remove_project_network(project_name: &str, config: &Config) -> Resu
 pub async fn list_devhub_networks(config: &Config) -> Result<Vec<String>> {
     let docker = get_docker().await?;
 
-    let networks = docker
-        .list_networks::<String>(None)
-        .await?;
+    let networks = docker.list_networks::<String>(None).await?;
 
     let devhub_networks: Vec<String> = networks
         .into_iter()
         .filter_map(|n| n.name)
-        .filter(|name| {
-            name.starts_with(&config.network_prefix) || name == &config.shared_network
-        })
+        .filter(|name| name.starts_with(&config.network_prefix) || name == &config.shared_network)
         .collect();
 
     Ok(devhub_networks)
@@ -245,17 +252,21 @@ pub async fn start_container(
     let internal_port = service.internal_port.unwrap_or(service.port);
 
     // Build exposed ports
-    let exposed_ports: HashMap<String, HashMap<(), ()>> = [(
-        format!("{}/tcp", internal_port),
-        HashMap::new(),
-    )]
-    .into_iter()
-    .collect();
+    let exposed_ports: HashMap<String, HashMap<(), ()>> =
+        [(format!("{}/tcp", internal_port), HashMap::new())]
+            .into_iter()
+            .collect();
 
     // Create container config
     let container_config = ContainerConfig {
         image: Some(image.clone()),
-        cmd: Some(service.command.split_whitespace().map(String::from).collect()),
+        cmd: Some(
+            service
+                .command
+                .split_whitespace()
+                .map(String::from)
+                .collect(),
+        ),
         env: Some(env_vec),
         exposed_ports: Some(exposed_ports),
         working_dir: service.cwd.clone(),
@@ -278,7 +289,10 @@ pub async fn start_container(
     // Create the container
     docker
         .create_container(
-            Some(CreateContainerOptions { name: name.clone(), platform: None }),
+            Some(CreateContainerOptions {
+                name: name.clone(),
+                platform: None,
+            }),
             container_config,
         )
         .await
@@ -330,11 +344,7 @@ pub async fn stop_container(project_name: &str, service_name: &str) -> Result<()
     let name = container_name(project_name, service_name);
 
     if !is_container_running(&name).await {
-        println!(
-            "  {} Container {} not running",
-            "".dimmed(),
-            name.cyan()
-        );
+        println!("  {} Container {} not running", "".dimmed(), name.cyan());
         return Ok(());
     }
 
@@ -489,14 +499,8 @@ mod tests {
 
     #[test]
     fn test_container_name() {
-        assert_eq!(
-            container_name("my-project", "api"),
-            "my-project-api"
-        );
-        assert_eq!(
-            container_name("test", "web"),
-            "test-web"
-        );
+        assert_eq!(container_name("my-project", "api"), "my-project-api");
+        assert_eq!(container_name("test", "web"), "test-web");
     }
 
     #[test]

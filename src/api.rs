@@ -522,9 +522,7 @@ async fn open_vscode(
 
     // Try each known path for the 'code' command
     for code_cmd in &code_paths {
-        let result = std::process::Command::new(code_cmd)
-            .arg(&path)
-            .output();
+        let result = std::process::Command::new(code_cmd).arg(&path).output();
 
         if let Ok(output) = result {
             if output.status.success() {
@@ -551,7 +549,10 @@ async fn open_vscode(
         let stderr = String::from_utf8_lossy(&fallback.stderr);
         Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to open VS Code: {}. Make sure VS Code is installed.", stderr),
+            format!(
+                "Failed to open VS Code: {}. Make sure VS Code is installed.",
+                stderr
+            ),
         ))
     }
 }

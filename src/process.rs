@@ -139,10 +139,7 @@ fn inject_service_urls(
         // These are useful for frameworks that expect specific env var names
         if *project_mode == ProjectMode::Container {
             // In container mode, internal URLs are used for server-side communication
-            env.insert(
-                format!("{}_URL", service_var_name),
-                external_url,
-            );
+            env.insert(format!("{}_URL", service_var_name), external_url);
         }
     }
 }
@@ -168,15 +165,13 @@ fn expand_service_references(
             service.name.clone(),
             get_service_internal_url(project_name, service),
         );
-        service_ports.insert(
-            service.name.clone(),
-            service.port.to_string(),
-        );
+        service_ports.insert(service.name.clone(), service.port.to_string());
     }
 
     // Regex to match ${service_name.property} syntax
     // property can be: url, internal, port
-    let re_service_ref = regex::Regex::new(r"\$\{([a-zA-Z_][a-zA-Z0-9_-]*)\.(url|internal|port)\}").unwrap();
+    let re_service_ref =
+        regex::Regex::new(r"\$\{([a-zA-Z_][a-zA-Z0-9_-]*)\.(url|internal|port)\}").unwrap();
 
     // Collect keys to iterate
     let keys: Vec<String> = env.keys().cloned().collect();
@@ -190,7 +185,10 @@ fn expand_service_references(
 
                     match property {
                         "url" => service_urls.get(service_name).cloned().unwrap_or_default(),
-                        "internal" => service_internal_urls.get(service_name).cloned().unwrap_or_default(),
+                        "internal" => service_internal_urls
+                            .get(service_name)
+                            .cloned()
+                            .unwrap_or_default(),
                         "port" => service_ports.get(service_name).cloned().unwrap_or_default(),
                         _ => String::new(),
                     }
@@ -389,6 +387,8 @@ pub async fn start_service(
 }
 
 /// Start a service with mode awareness (native vs container)
+/// Note: CR-001 foundation - will be wired up in future release
+#[allow(dead_code)]
 pub async fn start_service_with_mode(
     project_name: &str,
     project_path: &Path,
@@ -410,6 +410,8 @@ pub async fn start_service_with_mode(
 }
 
 /// Start a service in container mode
+/// Note: CR-001 foundation - will be wired up in future release
+#[allow(dead_code)]
 pub async fn start_service_container(
     project_name: &str,
     project_path: &Path,
@@ -576,7 +578,7 @@ async fn start_service_native(
         ServiceType::Node => 30,        // Node is usually fast
         ServiceType::Python => 15,
         ServiceType::Go => 30,
-        ServiceType::Dart => 30,        // Dart is usually fast
+        ServiceType::Dart => 30, // Dart is usually fast
         ServiceType::DockerCompose => 60,
         ServiceType::Shell => 10,
     };
@@ -816,6 +818,8 @@ pub async fn stop_service(project_name: &str, service: &Service) -> Result<()> {
 }
 
 /// Stop a service with mode awareness (native vs container)
+/// Note: CR-001 foundation - will be wired up in future release
+#[allow(dead_code)]
 pub async fn stop_service_with_mode(
     project_name: &str,
     service: &Service,

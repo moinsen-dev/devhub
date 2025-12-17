@@ -2,6 +2,11 @@
 //!
 //! This module provides auto-generation of Dockerfiles for projects
 //! that want to run in container mode but don't have their own Dockerfile.
+//!
+//! Note: This module is foundation code for CR-001 (Docker Network Isolation).
+//! Functions are not yet wired into the main CLI but will be in a future release.
+
+#![allow(dead_code)]
 
 use anyhow::Result;
 use std::path::Path;
@@ -326,9 +331,11 @@ pub fn has_dockerfile(project_path: &Path, service: &Service) -> bool {
     }
 
     // Check for standard Dockerfile locations
-    let dockerfile_paths = vec![
+    let dockerfile_paths = [
         project_path.join("Dockerfile"),
-        project_path.join(".devhub").join(format!("Dockerfile.{}", service.name)),
+        project_path
+            .join(".devhub")
+            .join(format!("Dockerfile.{}", service.name)),
     ];
 
     // If service has a cwd, also check there

@@ -111,7 +111,6 @@ pub struct Service {
     pub env_file: Option<String>,
 
     // === Container mode fields ===
-
     /// Per-service mode override (for hybrid projects)
     #[serde(default)]
     pub mode: Option<ServiceMode>,
@@ -400,8 +399,14 @@ main = true
         assert_eq!(manifest.project.name, "container-project");
         assert_eq!(manifest.project.mode, ProjectMode::Container);
         assert_eq!(manifest.project.depends_on_infra.len(), 2);
-        assert!(manifest.project.depends_on_infra.contains(&InfraService::Postgres));
-        assert!(manifest.project.depends_on_infra.contains(&InfraService::Redis));
+        assert!(manifest
+            .project
+            .depends_on_infra
+            .contains(&InfraService::Postgres));
+        assert!(manifest
+            .project
+            .depends_on_infra
+            .contains(&InfraService::Redis));
 
         // First service uses project default (container)
         assert_eq!(manifest.services[0].image, Some("dart:3.5".to_string()));
@@ -444,7 +449,10 @@ volumes = ["./data:/app/data"]
 
         // Worker runs in container
         assert_eq!(manifest.services[1].mode, Some(ServiceMode::Container));
-        assert_eq!(manifest.services[1].image, Some("node:22-alpine".to_string()));
+        assert_eq!(
+            manifest.services[1].image,
+            Some("node:22-alpine".to_string())
+        );
         assert_eq!(
             manifest.services[1].dockerfile,
             Some("worker/Dockerfile".to_string())

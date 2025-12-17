@@ -2,6 +2,11 @@
 //!
 //! This module manages shared infrastructure services (PostgreSQL, Redis, MinIO)
 //! that can be used by multiple projects running in container mode.
+//!
+//! Note: This module is foundation code for CR-001 (Docker Network Isolation).
+//! Functions are not yet wired into the main CLI but will be in a future release.
+
+#![allow(dead_code)]
 
 use anyhow::{Context, Result};
 use colored::Colorize;
@@ -56,7 +61,9 @@ pub async fn get_status(config: &Config) -> Result<InfraStatus> {
     ];
 
     // Check if shared network exists
-    let networks = docker::list_devhub_networks(config).await.unwrap_or_default();
+    let networks = docker::list_devhub_networks(config)
+        .await
+        .unwrap_or_default();
     let shared_network_exists = networks.contains(&config.shared_network);
 
     Ok(InfraStatus {
@@ -290,18 +297,12 @@ pub async fn stop(config: &Config, services: Option<Vec<String>>) -> Result<()> 
     let compose_path = config.infrastructure.dir.join("docker-compose.yml");
 
     if !compose_path.exists() {
-        println!(
-            "  {} Infrastructure not initialized",
-            "".yellow()
-        );
+        println!("  {} Infrastructure not initialized", "".yellow());
         return Ok(());
     }
 
     let mut cmd = Command::new("docker");
-    cmd.arg("compose")
-        .arg("-f")
-        .arg(&compose_path)
-        .arg("stop");
+    cmd.arg("compose").arg("-f").arg(&compose_path).arg("stop");
 
     // Add specific services if provided
     if let Some(svcs) = services {
@@ -334,10 +335,7 @@ pub fn logs(config: &Config, service: Option<&str>, follow: bool, lines: usize) 
     let compose_path = config.infrastructure.dir.join("docker-compose.yml");
 
     if !compose_path.exists() {
-        println!(
-            "  {} Infrastructure not initialized",
-            "".yellow()
-        );
+        println!("  {} Infrastructure not initialized", "".yellow());
         return Ok(());
     }
 
@@ -386,11 +384,7 @@ pub async fn create_project_database(project_name: &str) -> Result<()> {
         .context("Failed to create project database")?;
 
     if output.status.success() {
-        println!(
-            "  {} Created database: {}",
-            "✓".green(),
-            db_name.cyan()
-        );
+        println!("  {} Created database: {}", "✓".green(), db_name.cyan());
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         // Check if it's just a "already exists" error
@@ -403,10 +397,7 @@ pub async fn create_project_database(project_name: &str) -> Result<()> {
 }
 
 /// Get environment variables for infrastructure connections
-pub fn get_infra_env(
-    project_name: &str,
-    depends_on: &[InfraService],
-) -> HashMap<String, String> {
+pub fn get_infra_env(project_name: &str, depends_on: &[InfraService]) -> HashMap<String, String> {
     let mut env = HashMap::new();
     let db_name = project_name.replace('-', "_").to_lowercase();
 
@@ -441,7 +432,10 @@ pub fn get_infra_env(
                 );
                 env.insert("MINIO_ACCESS_KEY".to_string(), "devhub".to_string());
                 env.insert("MINIO_SECRET_KEY".to_string(), "devhub123".to_string());
-                env.insert("S3_ENDPOINT".to_string(), "http://devhub-minio:9000".to_string());
+                env.insert(
+                    "S3_ENDPOINT".to_string(),
+                    "http://devhub-minio:9000".to_string(),
+                );
             }
             InfraService::Kafka => {
                 env.insert(
@@ -521,7 +515,10 @@ mod tests {
     fn test_get_infra_env_postgres() {
         let env = get_infra_env("my-project", &[InfraService::Postgres]);
 
-        assert_eq!(env.get("POSTGRES_HOST"), Some(&"devhub-postgres".to_string()));
+        assert_eq!(
+            env.get("POSTGRES_HOST"),
+            Some(&"devhub-postgres".to_string())
+        );
         assert_eq!(env.get("POSTGRES_DB"), Some(&"my_project".to_string()));
         assert!(env.get("DATABASE_URL").unwrap().contains("my_project"));
     }
@@ -540,7 +537,11 @@ mod tests {
     fn test_get_infra_env_multiple() {
         let env = get_infra_env(
             "full-stack",
-            &[InfraService::Postgres, InfraService::Redis, InfraService::Minio],
+            &[
+                InfraService::Postgres,
+                InfraService::Redis,
+                InfraService::Minio,
+            ],
         );
 
         assert!(env.contains_key("POSTGRES_HOST"));

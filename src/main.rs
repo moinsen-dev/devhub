@@ -130,11 +130,7 @@ async fn handle_daemon_status(status: &DaemonStatus) {
                     "→".blue(),
                     "brew services start devhub".cyan()
                 );
-                eprintln!(
-                    "  {} Or run: {}",
-                    "→".blue(),
-                    "devhub daemon".cyan()
-                );
+                eprintln!("  {} Or run: {}", "→".blue(), "devhub daemon".cyan());
                 eprintln!();
             }
         }
@@ -471,7 +467,6 @@ enum Commands {
     },
 
     // === Container Mode Commands ===
-
     /// Manage shared infrastructure (PostgreSQL, Redis, MinIO)
     Infra {
         #[command(subcommand)]
@@ -1660,7 +1655,11 @@ async fn cmd_daemon_status() -> Result<()> {
                 .timeout(std::time::Duration::from_secs(2))
                 .build()
             {
-                if let Ok(resp) = client.get("http://localhost:9876/api/projects").send().await {
+                if let Ok(resp) = client
+                    .get("http://localhost:9876/api/projects")
+                    .send()
+                    .await
+                {
                     if let Ok(projects) = resp.json::<Vec<serde_json::Value>>().await {
                         println!("  {} Projects: {}", "→".blue(), projects.len());
                     }
@@ -1668,15 +1667,15 @@ async fn cmd_daemon_status() -> Result<()> {
             }
         }
         DaemonStatus::VersionMismatch { daemon_version } => {
-            println!("  {} Status: {}", "●".yellow(), "Running (version mismatch)".yellow());
+            println!(
+                "  {} Status: {}",
+                "●".yellow(),
+                "Running (version mismatch)".yellow()
+            );
             println!("  {} Daemon version: {}", "→".blue(), daemon_version.red());
             println!("  {} CLI version: {}", "→".blue(), VERSION.green());
             println!();
-            println!(
-                "  {} Run: {}",
-                "!".yellow(),
-                "devhub daemon restart".cyan()
-            );
+            println!("  {} Run: {}", "!".yellow(), "devhub daemon restart".cyan());
         }
         DaemonStatus::NotRunning => {
             println!("  {} Status: {}", "○".dimmed(), "Not running".dimmed());
@@ -1699,13 +1698,23 @@ async fn cmd_daemon_status() -> Result<()> {
         if output.status.success() {
             if let Ok(json) = serde_json::from_slice::<Vec<serde_json::Value>>(&output.stdout) {
                 if let Some(info) = json.first() {
-                    let status = info.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
-                    let running = info.get("running").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let status = info
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let running = info
+                        .get("running")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
 
                     println!("{}", "Homebrew Service:".bold());
                     println!(
                         "  {} Status: {}",
-                        if running { "●".green() } else { "○".dimmed() },
+                        if running {
+                            "●".green()
+                        } else {
+                            "○".dimmed()
+                        },
                         status
                     );
 
@@ -1754,9 +1763,7 @@ fn ensure_reverse_proxy() {
         .args(["ps", "-q", "-f", "name=caddy-proxy"])
         .output();
 
-    let is_running = check_output
-        .map(|o| !o.stdout.is_empty())
-        .unwrap_or(false);
+    let is_running = check_output.map(|o| !o.stdout.is_empty()).unwrap_or(false);
 
     if is_running {
         tracing::debug!("Reverse proxy is already running");
@@ -1764,21 +1771,21 @@ fn ensure_reverse_proxy() {
     }
 
     // Start the reverse proxy
-    println!(
-        "  {} Starting reverse proxy...",
-        "→".blue()
-    );
+    println!("  {} Starting reverse proxy...", "→".blue());
 
     let result = std::process::Command::new("docker")
-        .args(["compose", "-f", compose_file.to_str().unwrap_or_default(), "up", "-d"])
+        .args([
+            "compose",
+            "-f",
+            compose_file.to_str().unwrap_or_default(),
+            "up",
+            "-d",
+        ])
         .output();
 
     match result {
         Ok(output) if output.status.success() => {
-            println!(
-                "  {} Reverse proxy started",
-                "✓".green()
-            );
+            println!("  {} Reverse proxy started", "✓".green());
         }
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1789,11 +1796,7 @@ fn ensure_reverse_proxy() {
             );
         }
         Err(e) => {
-            eprintln!(
-                "  {} Failed to start reverse proxy: {}",
-                "✗".red(),
-                e
-            );
+            eprintln!("  {} Failed to start reverse proxy: {}", "✗".red(), e);
         }
     }
 }
@@ -2597,11 +2600,7 @@ async fn cmd_infra(action: InfraAction) -> Result<()> {
 }
 
 /// Convert a project to container mode
-async fn cmd_containerize(
-    registry: &Registry,
-    project: Option<String>,
-    force: bool,
-) -> Result<()> {
+async fn cmd_containerize(registry: &Registry, project: Option<String>, force: bool) -> Result<()> {
     let (project_name, entry) = resolve_project(registry, project)?;
     let project_path = &entry.path;
 
@@ -2624,10 +2623,7 @@ async fn cmd_containerize(
 
     // Check if already in container mode
     if manifest.project.mode == manifest::ProjectMode::Container && !force {
-        println!(
-            "  {} Project is already in container mode",
-            "".yellow()
-        );
+        println!("  {} Project is already in container mode", "".yellow());
         return Ok(());
     }
 
@@ -2675,10 +2671,7 @@ async fn cmd_containerize(
     caddy::generate_config(&project_name, &manifest)?;
     caddy::reload()?;
 
-    println!(
-        "\n  {} Project converted to container mode",
-        "✓".green()
-    );
+    println!("\n  {} Project converted to container mode", "✓".green());
     println!(
         "  {} Run 'devhub start {}' to start with containers",
         "→".dimmed(),
@@ -2712,10 +2705,7 @@ async fn cmd_native(registry: &Registry, project: Option<String>) -> Result<()> 
 
     // Check if already in native mode
     if manifest.project.mode == manifest::ProjectMode::Native {
-        println!(
-            "  {} Project is already in native mode",
-            "".yellow()
-        );
+        println!("  {} Project is already in native mode", "".yellow());
         return Ok(());
     }
 
@@ -2735,10 +2725,7 @@ async fn cmd_native(registry: &Registry, project: Option<String>) -> Result<()> 
     caddy::generate_config(&project_name, &manifest)?;
     caddy::reload()?;
 
-    println!(
-        "\n  {} Project switched to native mode",
-        "✓".green()
-    );
+    println!("\n  {} Project switched to native mode", "✓".green());
 
     Ok(())
 }
@@ -2760,12 +2747,7 @@ async fn cmd_network(action: NetworkAction) -> Result<()> {
                 for network in networks {
                     let is_shared = network == config.shared_network;
                     let label = if is_shared { " (shared)" } else { "" };
-                    println!(
-                        "  {} {}{}",
-                        "●".green(),
-                        network.cyan(),
-                        label.dimmed()
-                    );
+                    println!("  {} {}{}", "●".green(), network.cyan(), label.dimmed());
                 }
             }
 

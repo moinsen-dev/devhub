@@ -98,3 +98,108 @@ jobs:
           draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-homebrew:
+    name: Update Homebrew Formula
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download macOS ARM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: devhub-aarch64-apple-darwin
+          path: artifacts/arm
+
+      - name: Download macOS Intel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: devhub-x86_64-apple-darwin
+          path: artifacts/intel
+
+      - name: Calculate checksums
+        id: checksums
+        run: |
+          ARM_SHA=$(sha256sum artifacts/arm/devhub-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)
+          INTEL_SHA=$(sha256sum artifacts/intel/devhub-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)
+          echo "arm_sha=$ARM_SHA" >> $GITHUB_OUTPUT
+          echo "intel_sha=$INTEL_SHA" >> $GITHUB_OUTPUT
+          echo "ARM SHA256: $ARM_SHA"
+          echo "Intel SHA256: $INTEL_SHA"
+
+      - name: Extract version
+        id: version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          VERSION=${REF_NAME#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Update Homebrew Formula
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ARM_SHA: ${{ steps.checksums.outputs.arm_sha }}
+          INTEL_SHA: ${{ steps.checksums.outputs.intel_sha }}
+        run: |
+          # Clone the homebrew-tap repository
+          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/moinsen-dev/homebrew-tap.git
+          cd homebrew-tap
+
+          # Update the formula
+          cat > Formula/devhub.rb << FORMULA_EOF
+          class Devhub < Formula
+            desc "Multi-project development environment manager"
+            homepage "https://github.com/moinsen-dev/devhub"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/moinsen-dev/devhub/releases/download/v${VERSION}/devhub-aarch64-apple-darwin.tar.gz"
+                sha256 "${ARM_SHA}"
+              else
+                url "https://github.com/moinsen-dev/devhub/releases/download/v${VERSION}/devhub-x86_64-apple-darwin.tar.gz"
+                sha256 "${INTEL_SHA}"
+              end
+            end
+
+            def install
+              bin.install "devhub"
+            end
+
+            def caveats
+              <<~EOS
+                To start devhub daemon automatically:
+                  brew services start devhub
+
+                Or run manually:
+                  devhub daemon
+
+                Dashboard available at: http://localhost:9876
+              EOS
+            end
+
+            service do
+              run [opt_bin/"devhub", "daemon"]
+              keep_alive true
+              log_path var/"log/devhub.log"
+              error_log_path var/"log/devhub.log"
+            end
+
+            test do
+              system "#{bin}/devhub", "--version"
+            end
+          end
+          FORMULA_EOF
+
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Commit and push
+          git add Formula/devhub.rb
+          git commit -m "devhub ${VERSION}"
+          git push

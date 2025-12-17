@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2025-12-17
+
+### Added
+
+- **Claude Code Skill**
+  - DevHub skill for Claude Code at `.claude/skills/devhub/`
+  - Comprehensive CLI reference, config format, and examples
+  - Install script at `scripts/install-devhub-skill.sh`
+
+### Changed
+
+- **Release Automation**
+  - Release workflow now auto-updates Homebrew formula
+  - Calculates SHA256 checksums and pushes to `moinsen-dev/homebrew-tap`
+
 ## [0.3.0] - 2025-12-16
 
 ### Added
@@ -148,7 +163,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - IPv6 port detection for Next.js and other modern Node servers
 
-[Unreleased]: https://github.com/moinsen-dev/devhub/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/moinsen-dev/devhub/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/moinsen-dev/devhub/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/moinsen-dev/devhub/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/moinsen-dev/devhub/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/moinsen-dev/devhub/releases/tag/v0.1.0
